@@ -15,6 +15,11 @@ Usage:
   godev                        Discover services and open the TUI
   godev run <target>...        Open the TUI scoped to the given groups
                                 and/or individual services
+  godev [run <target>...] --detach
+                                Same as above, but run in the background
+                                instead of opening the TUI
+  godev attach                 Reattach the TUI to a --detach'd instance
+  godev kill                   Stop a --detach'd instance
   godev list                   List discovered/configured services
   godev init                   Write a starter .godev.yaml
   godev debug <service>        Build a debug binary and start headless Delve
@@ -35,6 +40,14 @@ names, e.g. "godev run core web api" - each matching service is
 started exactly once even if it belongs to more than one requested
 group.
 
+--detach runs services in the background, detached from this
+terminal, instead of opening the TUI - "godev --detach" for
+everything, "godev run <target>... --detach" for a scoped subset. Only
+one detached instance runs per project at a time; "godev attach" opens
+the normal TUI against it (control included: restart/stop/debug from
+the attached TUI act on the real, running instance), and "godev kill"
+stops it.
+
 In the TUI: up/down select, enter focus a service's logs, tab expand
 detail, r restart, s start/stop, d toggle debugger, c clear logs,
 1-4 (or F1-F4) switch views, pgup/pgdn scroll, q quit.
@@ -45,7 +58,16 @@ func main() {
 }
 
 func run(args []string) int {
+	if len(args) > 0 && args[0] == detachedMarker {
+		return cmdDaemonRun(args[1:])
+	}
+
+	detach, args := extractDetachFlag(args)
+
 	if len(args) == 0 {
+		if detach {
+			return cmdRunDetached(nil)
+		}
 		return cmdRoot()
 	}
 
@@ -57,10 +79,17 @@ func run(args []string) int {
 		return cmdList()
 	case "init":
 		return cmdInit()
+	case "attach":
+		return cmdAttach()
+	case "kill":
+		return cmdKill()
 	case "run":
 		if len(args) < 2 {
-			fmt.Fprintln(os.Stderr, "usage: godev run <group-or-service> [<group-or-service>...]")
+			fmt.Fprintln(os.Stderr, "usage: godev run <group-or-service> [<group-or-service>...] [--detach]")
 			return 1
+		}
+		if detach {
+			return cmdRunDetached(args[1:])
 		}
 		return cmdRun(args[1:])
 	case "debug":
@@ -83,4 +112,23 @@ func run(args []string) int {
 		}
 		return cmdRunOne(name, extra)
 	}
+}
+
+// extractDetachFlag removes the first "--detach" found in args before
+// any literal "--" separator (args after "--" are meant to be passed
+// through verbatim to a service, e.g. "godev api -- --detach", and
+// must never be touched here), and reports whether it was present.
+func extractDetachFlag(args []string) (bool, []string) {
+	for i, a := range args {
+		if a == "--" {
+			break
+		}
+		if a == "--detach" {
+			out := make([]string, 0, len(args)-1)
+			out = append(out, args[:i]...)
+			out = append(out, args[i+1:]...)
+			return true, out
+		}
+	}
+	return false, args
 }

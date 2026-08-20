@@ -89,6 +89,24 @@ func NewSupervisor(projectRoot string, services []domain.Service) (*Supervisor, 
 func (s *Supervisor) Logs() *logs.Manager { return s.logsMgr }
 func (s *Supervisor) Events() *EventBus   { return s.events }
 
+// SubscribeEvents and SubscribeLogs flatten Events().Subscribe()/
+// Logs().Subscribe() into direct Supervisor methods, and ClearLogs
+// flattens Logs().Clear() - together these are exactly what
+// tui.Source needs, so both the in-process TUI and a remote
+// (attached) client can be written against the same small interface
+// instead of the full Supervisor/EventBus/logs.Manager surface.
+func (s *Supervisor) SubscribeEvents(buf int) (<-chan Event, func()) {
+	return s.events.Subscribe(buf)
+}
+
+func (s *Supervisor) SubscribeLogs(buf int) (<-chan logs.Event, func()) {
+	return s.logsMgr.Subscribe(buf)
+}
+
+func (s *Supervisor) ClearLogs() {
+	s.logsMgr.Clear()
+}
+
 // Services returns the static config for every known service, in
 // discovery order.
 func (s *Supervisor) Services() []domain.Service {

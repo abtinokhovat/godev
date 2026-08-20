@@ -3,14 +3,13 @@
 package builder
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 
 	"github.com/abtinokhovat/godev/internal/domain"
+	"github.com/abtinokhovat/godev/internal/projectid"
 )
 
 // Mode selects build flags, per section 15.
@@ -41,9 +40,7 @@ func New(projectRoot string) (*Builder, error) {
 	if err != nil {
 		return nil, err
 	}
-	sum := sha256.Sum256([]byte(projectRoot))
-	projectID := hex.EncodeToString(sum[:])[:12]
-	cacheDir := filepath.Join(userCache, "godev", projectID)
+	cacheDir := filepath.Join(userCache, "godev", projectid.Hash(projectRoot))
 	if err := os.MkdirAll(cacheDir, 0o755); err != nil {
 		return nil, err
 	}

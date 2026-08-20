@@ -153,38 +153,61 @@ project-scoped cache-dir hashing already used for the build cache
 (`builder.New`) is the right pattern to reuse for anything Phase 2/3
 needs to key per-project (a future daemon socket path, in particular).
 
-## Phase 3 — Local daemon/API layer
+## Phase 3 — Detach / attach / kill (implemented)
 
-Generalizes Phase 2's plumbing so MCP (and, later, IDE extensions) can
-attach to an *already-running* `godev` instance instead of each
-spinning up a competing one, and resolves a longstanding CLI gap along
-the way. The supervisor's event bus and log manager already have the
-right shape for this (non-blocking pub/sub, drop-slow-subscriber
-semantics, a complete read/write method surface) — today there's
-simply no daemon/server/IPC of any kind; every CLI invocation is a
-fresh, standalone, in-process instance.
+The original plan for this phase was a general-purpose daemon: a
+Unix-socket JSON-RPC layer plus a local HTTP+SSE layer, justified by
+two consumers — MCP wanting to attach to an already-running instance,
+and (lowest-priority, possibly-never-built) IDE extensions needing an
+API. On reflection that was overkill: building general IPC
+infrastructure mostly to serve a phase that might not happen is
+speculative engineering for a project this size. What actually got
+built is narrower, justified by a concrete, immediate need instead:
 
-- A Unix-socket JSON-RPC layer (socket path derived the same way the
-  build cache directory is today, per-project) for CLI-to-daemon and
-  MCP-to-daemon control.
-- `godev` (bare) starts the daemon in-process alongside the TUI, best
-  effort — if the socket can't bind, fall back to today's standalone
-  behavior with a warning, never hard-fail.
-- `godev mcp` prefers attaching to an existing project daemon if one
-  is running, falling back to Phase 2's embedded-`Supervisor` mode
-  otherwise.
-- Resolves a previously-identified gap: `godev stop/restart/logs
-  <service>` become real daemon-client commands instead of today's
-  foreground-only workaround.
-- A local HTTP+SSE layer on the same daemon, for IDE extensions
-  (Phase 4) specifically — easier for extension hosts to consume than
-  raw socket RPC.
+- **`godev run <target>... --detach`** (or bare `godev --detach` for
+  everything) re-execs itself as a fully detached background process —
+  session-detached via `setsid` on Linux/macOS, `DETACHED_PROCESS` on
+  Windows — and returns immediately. One instance per project: a
+  second `--detach` while one is already running is refused with a
+  pointer to `godev attach`/`godev kill`, which also solves the
+  "two godev processes fight over the same services" risk raised
+  earlier without needing a separate lock mechanism.
+- **`godev attach`** opens the *exact same TUI* as the foreground path
+  against the detached instance, over a per-project Unix socket
+  (`internal/daemon`). This reuses virtually all existing TUI code: a
+  small `tui.Source` interface captures exactly what the TUI needs
+  from a supervisor, `*application.Supervisor` already satisfies it
+  structurally, and `daemon.RemoteSource` is a second implementation —
+  a locally-synced replica kept current by the instance's event/log
+  stream, so reads never round-trip and actions
+  (start/stop/restart/debug) are fire-and-forget messages whose result
+  flows back the same way the in-process TUI already handles its own
+  async dispatches.
+- **`godev kill`** sends a shutdown message over the same socket and
+  waits for the instance to actually exit before reporting success,
+  rather than just signaling and hoping.
+- No HTTP/SSE, no general RPC surface, no scope beyond exactly this.
+  If IDE extension work (Phase 4) actually starts later, a proper
+  daemon API is worth revisiting *then*, justified by a real consumer
+  — not built speculatively now.
+
+Verified with a real end-to-end test (not just unit tests): detach,
+confirm the background process and its child service survive the
+launching shell exiting, attach in a separate terminal and see live
+logs, trigger a restart from the attached TUI and confirm the real
+process's PID changes, kill it, confirm the attached TUI notices the
+dropped connection and exits on its own, and confirm the socket/PID
+files are cleaned up.
 
 ## Phase 4 — IDE extensions (lowest priority)
 
 JetBrains first, then VS Code, then Zed — order confirmed by the
-project owner. Hard-blocked on Phase 3 (needs a stable daemon API to
-talk to); benefits from Phase 0/1's grouping data.
+project owner. Blocked on a real API surface to talk to: Phase 3 as
+actually built (a narrow attach/kill protocol) isn't that — an IDE
+extension needing to list/control services from outside a terminal
+would need at least an HTTP (or similar) layer added on top of
+`internal/daemon`'s existing Unix-socket server first. Benefits from
+Phase 0/1's grouping data.
 
 1. **JetBrains plugin** — tool window listing services/groups sourced
    from the daemon, start/stop/restart/debug actions, one-click attach
