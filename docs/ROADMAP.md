@@ -81,25 +81,60 @@ implementing rather than over-building ahead of need:
   consistent with the existing (documented) "no per-service dependency
   graph" limitation for Go services, not a new gap. Still tracked below.
 
-## Phase 2 — MCP server for AI agents
+## Phase 2 — MCP server for AI agents (implemented)
 
-Expose godev to AI agents (Claude and others) as a set of MCP tools:
-list services (and their status/logs), start/stop/restart a service,
-start/stop debugging a service, fetch recent logs, get a running
-debug session's connection info. This lets an agent drive the same
-operations a developer does through the TUI — including debugging a
-Go service via the existing Delve integration — without needing to
-shell out to ad hoc commands.
+Exposes godev to AI agents (Claude and others) as MCP tools:
+`list_services`, `get_service`, `get_logs`, `start_service`,
+`stop_service`, `restart_service`, `start_debug`, `stop_debug`. This
+lets an agent drive the same operations a developer does through the
+TUI — including debugging a Go service via the existing Delve
+integration — without needing to shell out to ad hoc commands.
 
-Ship this as a `godev mcp` subcommand (stdio transport, the standard
-MCP transport for local tools) wrapping an in-process
-`application.Supervisor` the same way the TUI does today — no daemon
-required for a first version, since MCP already provides the
-client/server framing. The one limitation this leaves: an MCP-driven
-agent and a developer's own `godev` TUI can't operate on the same
-project's services at once if MCP spins up its own separate
-`Supervisor` instance each time. Phase 3 below removes that limitation
-once it exists; it is not a blocker for shipping Phase 2 first.
+Shipped as `godev mcp` (`cmd/godev/commands.go`'s `cmdMCP`), stdio
+transport via the official `github.com/modelcontextprotocol/go-sdk/mcp`
+package, wrapping an in-process `application.Supervisor` the same way
+the TUI does today — no daemon required for this first version, since
+MCP already provides the client/server framing. `internal/mcpserver`
+holds the tool definitions (`mcpserver.go`) and handlers
+(`tools.go`); each handler is a thin wrapper over an existing
+`Supervisor` method (`Services`, `Runtime`, `BuildInfo`,
+`Logs().Snapshot`, `Start`/`Stop`/`Restart`, `StartDebug`/`StopDebug`),
+returning a typed Go struct as the tool's structured output (the SDK
+auto-generates both the JSON Schema and a text-content fallback from
+the type) rather than hand-built JSON.
+
+Verified end-to-end over the real MCP wire protocol (not just
+in-process unit tests): a Python driver script spoke raw
+newline-delimited JSON-RPC to a `godev mcp` subprocess against a live
+fixture project — `initialize`, `tools/list` (confirmed all 8 tools),
+then `list_services`/`get_service`/`get_logs` against a genuinely
+running Go service, an unknown-service call correctly setting
+`isError`, `stop_service` correctly returning `STOPPED` (not a stale
+`STOPPING`), and `start_debug` failing cleanly when `dlv` isn't
+installed rather than crashing the server.
+
+The one limitation this leaves: an MCP-driven agent and a developer's
+own `godev` TUI can't operate on the same project's services at once,
+since MCP spins up its own separate `Supervisor` instance per
+invocation. Phase 3 below removes that limitation once it exists; it
+was not a blocker for shipping Phase 2 first.
+
+**A real concurrency bug found and fixed along the way** (unrelated to
+MCP itself, but surfaced by an MCP test asserting on `Stop()`'s result
+immediately rather than polling for it): `Supervisor.Stop()` sent
+SIGTERM and waited for the process to exit, then returned - but the
+actual `Stopped` state transition happened in a *separate* goroutine
+(`monitor()`, watching the same process handle) with no guarantee it
+had completed by the time `Stop()` returned to its caller. Existing
+tests never caught this because they all polled for the end state with
+a timeout, which absorbs races like this rather than exposing them.
+Fixed with a `finalizeStopped` check-and-set that both `Stop()` (now
+synchronously, before returning) and `monitor()` (defensively, as a
+no-op if `Stop()` already won the race) call - `internal/application/
+lifecycle.go`. `Stop()` now guarantees `Runtime(name).State ==
+Stopped` by the time it returns, which matters far more for a
+programmatic caller like an MCP tool than it ever did for the TUI
+(where a `Stopping` flash for a few milliseconds was invisible).
 
 **Design constraint carried over from `godev run`**: a `godev mcp`
 process is scoped to one project root, exactly like every other godev

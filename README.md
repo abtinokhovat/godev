@@ -94,6 +94,8 @@ godev run <target>...      # open the TUI scoped to the given groups
 godev init                 # write a starter .godev.yaml
 godev debug <service>      # build a debug binary, start headless Delve,
                             # print VS Code / GoLand attach instructions
+godev mcp                  # serve this project's services to an AI agent
+                            # over MCP (stdio), for it to run/inspect/debug
 godev <service> [-- args]  # run one service in the foreground, with
                             # hot reload, passing one-off arguments
 ```
@@ -122,6 +124,25 @@ GoLand:
 
 In the TUI, press `d` on a selected service to start/stop its debugger
 the same way; the detail view (`enter`) shows the live endpoint.
+
+## AI agent access (MCP)
+
+```sh
+godev mcp
+```
+
+Serves this one project's services to an AI agent over the
+[Model Context Protocol](https://modelcontextprotocol.io), stdio
+transport — the same operations available through the TUI, callable by
+an agent: `list_services`, `get_service`, `get_logs`,
+`start_service`/`stop_service`/`restart_service`,
+`start_debug`/`stop_debug`. Debugging over MCP works the same as
+everywhere else in godev — Delve, Go services only.
+
+Nothing here is global: a `godev mcp` process serves exactly the
+project root it was started in, the same as every other godev command,
+so running it concurrently in several different projects' directories
+is safe and produces no cross-talk between them.
 
 ## Configuration
 
@@ -219,6 +240,9 @@ Merge order (later wins): discovery (`go list`) → JetBrains import →
 - **TUI** (`internal/tui`): a Bubble Tea front end that only calls the
   supervisor's public API — it never touches a process or Delve
   directly.
+- **MCP server** (`internal/mcpserver`): the same supervisor API again,
+  exposed as MCP tools over stdio via the official
+  `modelcontextprotocol/go-sdk`, for `godev mcp`.
 
 ## Explicitly out of scope
 
@@ -230,7 +254,9 @@ remain the debugger UI; Delve remains the debugger.
 ## Roadmap
 
 Manual and JetBrains-imported run configurations for non-Go services,
-plus grouping and `godev run <target>...`, are implemented (see above).
-Still planned: an MCP server so AI agents can run and debug services
-through godev, a local daemon/API, and (lowest priority) IDE
-extensions — tracked in [`docs/ROADMAP.md`](./docs/ROADMAP.md).
+grouping and `godev run <target>...`, and an MCP server (`godev mcp`)
+for AI agents are all implemented (see above). Still planned: a local
+daemon/API so multiple entry points (MCP, the CLI, eventually IDE
+extensions) can share one running instance per project instead of each
+starting their own, and (lowest priority) IDE extensions — tracked in
+[`docs/ROADMAP.md`](./docs/ROADMAP.md).

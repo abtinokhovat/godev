@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net"
 	"os/exec"
+	"strconv"
 	"time"
 
 	"github.com/abtinokhovat/godev/internal/domain"
@@ -86,7 +87,7 @@ func Start(serviceName, host string, port int, binaryPath string, args []string,
 // timeout elapses.
 func (s *Session) WaitListening(timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
-	addr := fmt.Sprintf("%s:%d", s.Host, s.Port)
+	addr := net.JoinHostPort(s.Host, strconv.Itoa(s.Port))
 	for time.Now().Before(deadline) {
 		conn, err := net.DialTimeout("tcp", addr, 200*time.Millisecond)
 		if err == nil {

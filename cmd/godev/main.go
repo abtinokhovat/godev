@@ -18,6 +18,8 @@ Usage:
   godev list                   List discovered/configured services
   godev init                   Write a starter .godev.yaml
   godev debug <service>        Build a debug binary and start headless Delve
+  godev mcp                    Serve this project's services to an AI agent
+                                over MCP (stdio), for it to run/inspect/debug
   godev <service> [-- args]    Run one service in the foreground with hot reload
   godev help                   Show this message
 
@@ -67,6 +69,8 @@ func run(args []string) int {
 			return 1
 		}
 		return cmdDebug(args[1])
+	case "mcp":
+		return cmdMCP()
 	default:
 		// godev <service> [-- args...]
 		name := args[0]
