@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/signal"
@@ -9,6 +10,7 @@ import (
 	"syscall"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/abtinokhovat/godev/internal/application"
 	"github.com/abtinokhovat/godev/internal/config"
@@ -16,6 +18,7 @@ import (
 	"github.com/abtinokhovat/godev/internal/discovery"
 	"github.com/abtinokhovat/godev/internal/domain"
 	"github.com/abtinokhovat/godev/internal/logs"
+	"github.com/abtinokhovat/godev/internal/mcpserver"
 	"github.com/abtinokhovat/godev/internal/tui"
 )
 
@@ -111,6 +114,52 @@ func runTUI(p *project, services []domain.Service, label string) int {
 	program := tea.NewProgram(m, tea.WithAltScreen())
 	if _, err := program.Run(); err != nil {
 		fmt.Fprintln(os.Stderr, "tui error:", err)
+	}
+
+	sup.Shutdown()
+	return 0
+}
+
+// cmdMCP starts every auto-start service (exactly like `godev`, bare)
+// and serves them over MCP on stdio instead of opening the TUI, so an
+// AI agent can list/inspect/start/stop/restart services and drive Go
+// debugging the same way a developer would. It never prints anything
+// to stdout itself - that stream is reserved for the MCP JSON-RPC
+// framing; startup/shutdown notes go to stderr only, and log/status
+// data is meant to be queried through the get_logs tool instead.
+//
+// Like every other godev command, this process is scoped to exactly
+// the one project it was started in - nothing here is global, so
+// running `godev mcp` concurrently in several different projects'
+// directories is safe and produces no cross-talk between them.
+func cmdMCP() int {
+	p, err := loadProject()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "error:", err)
+		return 1
+	}
+	sup, err := newSupervisor(p)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "error:", err)
+		return 1
+	}
+	sup.StartAll()
+
+	stopWatch, err := sup.WatchAndReload(200)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "warning: hot reload disabled:", err)
+	} else {
+		defer stopWatch()
+	}
+
+	fmt.Fprintf(os.Stderr, "godev mcp: serving %q (%d service(s)) over stdio\n", filepath.Base(p.Root), len(p.Services))
+
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer cancel()
+
+	server := mcpserver.New(sup, filepath.Base(p.Root))
+	if err := server.Run(ctx, &mcp.StdioTransport{}); err != nil {
+		fmt.Fprintln(os.Stderr, "mcp server error:", err)
 	}
 
 	sup.Shutdown()

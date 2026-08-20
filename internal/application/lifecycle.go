@@ -139,29 +139,28 @@ func (s *Supervisor) pumpOutput(name string, out <-chan process.OutputLine) {
 	}
 }
 
-// monitor waits for a process to exit and reacts: a deliberate stop just
-// records STOPPED, anything else is treated as a crash and (if
-// auto-restart is enabled) triggers a backoff-guarded restart, per
-// section 24-25.
+// monitor waits for a process to exit and reacts: a deliberate stop
+// gets finalized to STOPPED (see finalizeStopped), anything else is
+// treated as a crash and (if auto-restart is enabled) triggers a
+// backoff-guarded restart, per section 24-25.
 func (s *Supervisor) monitor(e *serviceEntry, name string, handle *process.Handle, gen int) {
 	err := handle.Wait()
 
 	s.mu.Lock()
-	stale := e.generation != gen
 	wasStopping := e.runtime.State == domain.StateStopping
+	stale := e.generation != gen
 	s.mu.Unlock()
-	if stale {
-		return // superseded by a newer start/restart
-	}
 
 	if wasStopping {
-		s.mu.Lock()
-		e.runtime.State = domain.StateStopped
-		e.runtime.PID = 0
-		s.mu.Unlock()
-		s.events.Publish(Event{Type: EventServiceStopped, Service: name})
-		s.log(name, logs.StreamSystem, "stopped")
+		// Stop() may already have finalized this itself (see
+		// finalizeStopped) by the time this goroutine gets scheduled -
+		// that's fine, the check-and-set inside is idempotent.
+		s.finalizeStopped(e, name)
 		return
+	}
+
+	if stale {
+		return // superseded by a newer start/restart
 	}
 
 	// Unexpected exit -> crash.
@@ -223,7 +222,34 @@ func (s *Supervisor) crashRestart(e *serviceEntry, name string) {
 	})
 }
 
-// Stop gracefully stops a running service.
+// finalizeStopped transitions e to Stopped exactly once per Stopping
+// episode: it's a check-and-set, so whichever of Stop() (synchronously,
+// right after confirming the process is dead) or monitor()
+// (asynchronously, on separately noticing the same handle exit) gets
+// here first does the actual work - the other call is a no-op, since by
+// then the state is no longer Stopping. This matters because both
+// Stop()'s handle.Stop() and monitor()'s handle.Wait() unblock from the
+// same closed channel with no ordering guarantee between them: without
+// this, a caller of Stop() could see it return while the state was
+// still Stopping, racing monitor()'s own finalization. Calling this
+// synchronously from Stop() closes that race - Runtime(name).State is
+// guaranteed to already be Stopped by the time Stop() returns.
+func (s *Supervisor) finalizeStopped(e *serviceEntry, name string) {
+	s.mu.Lock()
+	if e.runtime.State != domain.StateStopping {
+		s.mu.Unlock()
+		return
+	}
+	e.runtime.State = domain.StateStopped
+	e.runtime.PID = 0
+	s.mu.Unlock()
+	s.events.Publish(Event{Type: EventServiceStopped, Service: name})
+	s.log(name, logs.StreamSystem, "stopped")
+}
+
+// Stop gracefully stops a running service. When it returns, the
+// service's state is guaranteed to already be Stopped (see
+// finalizeStopped) - callers never need to poll for that themselves.
 func (s *Supervisor) Stop(name string) error {
 	e, ok := s.entry(name)
 	if !ok {
@@ -236,12 +262,6 @@ func (s *Supervisor) Stop(name string) error {
 	handle := e.handle
 	live := e.runtime.State == domain.StateRunning
 	if live {
-		// A real process is running: mark it Stopping and let monitor()
-		// (racing on the same handle) make the final Stopped transition
-		// once handle.Stop() below actually kills it - don't preempt that
-		// here, and don't touch e.generation, which would make monitor()
-		// think a newer start superseded it and skip the transition
-		// entirely, leaving the service stuck at Stopping forever.
 		e.runtime.State = domain.StateStopping
 	} else if e.runtime.State != domain.StateStopped {
 		// No live process to signal (crashed, build-failed, never
@@ -261,6 +281,11 @@ func (s *Supervisor) Stop(name string) error {
 	s.events.Publish(Event{Type: EventServiceStopping, Service: name})
 	s.log(name, logs.StreamSystem, "stopping...")
 	handle.Stop(stopTimeout)
+	// handle.Stop() only returns once the process is confirmed dead (it
+	// always blocks on the process's exit, escalating to SIGKILL past
+	// the timeout), so it's safe to finalize here rather than leaving it
+	// entirely to monitor() racing on the same handle.
+	s.finalizeStopped(e, name)
 	return nil
 }
 
