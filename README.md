@@ -9,7 +9,7 @@ to — all from a terminal UI. Non-Go services (or anything else you want
 managed alongside your Go services) come in through explicit
 configuration — a `.godev.yaml` entry or an imported JetBrains run
 configuration — rather than heuristic guessing, and can be grouped and
-run together with `godev run <group>`.
+run together with `godev run <group-or-service>...`.
 
 `godev` manages development. [Delve](https://github.com/go-delve/delve)
 manages debugging (for Go services). Your IDE remains the debugger UI.
@@ -89,7 +89,8 @@ rebuild-and-restart of every hot-reload-enabled service.
 
 ```sh
 godev list                 # list discovered/configured services, with groups
-godev run <group>          # open the TUI scoped to one named group
+godev run <target>...      # open the TUI scoped to the given groups
+                            # and/or individual services
 godev init                 # write a starter .godev.yaml
 godev debug <service>      # build a debug binary, start headless Delve,
                             # print VS Code / GoLand attach instructions
@@ -165,14 +166,19 @@ manual `command` entry does. Other configuration types are ignored.
 
 A service's `group` (a `.godev.yaml` field, or a JetBrains
 configuration's folder) organizes the TUI sidebar into a tree, and
-`godev run <group>` opens the TUI scoped to just that group's services
-- e.g. `godev run core` if `web` above is grouped with some Go services
-named `core`. Groups can mix Go and non-Go services freely: each
-service's own settings decide its behavior within the group - a Go
-service still gets the full hot-reload pipeline (watch → rebuild →
-restart), a command-based service gets hot reload without a rebuild
-step (there's nothing to build), since a command-based service's build
-step is an instant no-op to begin with.
+`godev run <target>...` opens the TUI scoped to whatever mix of groups
+and individual service names you give it - e.g. `godev run core` if
+`web` above is grouped with some Go services named `core`, or
+`godev run core web api` to combine a group with extra individual
+services. Each matching service runs exactly once even if more than
+one requested target resolves to it (a service in two overlapping
+groups, or a group plus that same service named explicitly). Groups
+can mix Go and non-Go services freely: each service's own settings
+decide its behavior within the group - a Go service still gets the
+full hot-reload pipeline (watch → rebuild → restart), a command-based
+service gets hot reload without a rebuild step (there's nothing to
+build), since a command-based service's build step is an instant
+no-op to begin with.
 
 Debugging (currently Delve-only) is not available for command-based
 services - `godev debug <service>` and the TUI's `d` key report a clear
@@ -224,7 +230,7 @@ remain the debugger UI; Delve remains the debugger.
 ## Roadmap
 
 Manual and JetBrains-imported run configurations for non-Go services,
-plus grouping and `godev run <group>`, are implemented (see above).
+plus grouping and `godev run <target>...`, are implemented (see above).
 Still planned: an MCP server so AI agents can run and debug services
 through godev, a local daemon/API, and (lowest priority) IDE
 extensions — tracked in [`docs/ROADMAP.md`](./docs/ROADMAP.md).

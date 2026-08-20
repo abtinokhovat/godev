@@ -56,27 +56,30 @@ func cmdRoot() int {
 	return runTUI(p, p.Services, filepath.Base(p.Root))
 }
 
-// cmdRunGroup opens the TUI scoped to a single named group, e.g.
-// `godev run core` starts and displays only the services in the "core"
-// group - it never affects services outside that group.
-func cmdRunGroup(group string) int {
+// cmdRun opens the TUI scoped to the given targets, e.g.
+// `godev run core web api` - each target is a group name or an
+// individual service name, resolved and deduplicated by resolveTargets
+// so a service shared by two requested groups still only runs once.
+// It never affects services outside the resolved set.
+func cmdRun(targets []string) int {
 	p, err := loadProject()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
 		return 1
 	}
-	services := servicesInGroup(p.Services, group)
-	if len(services) == 0 {
-		fmt.Fprintf(os.Stderr, "error: no services in group %q (try `godev list`)\n", group)
+	services, err := resolveTargets(p.Services, targets)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v (try `godev list`)\n", err)
 		return 1
 	}
 
-	fmt.Printf("Running group %q: %d service(s)\n", group, len(services))
+	label := strings.Join(targets, ", ")
+	fmt.Printf("Running %s: %d service(s)\n", label, len(services))
 	for _, s := range services {
 		fmt.Printf("  %-16s %s\n", s.Name, serviceSource(s))
 	}
 
-	return runTUI(p, services, filepath.Base(p.Root)+" · "+group)
+	return runTUI(p, services, filepath.Base(p.Root)+" · "+label)
 }
 
 func serviceSource(s domain.Service) string {

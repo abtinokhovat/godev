@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/abtinokhovat/godev/internal/application"
 	"github.com/abtinokhovat/godev/internal/config"
@@ -68,17 +69,57 @@ func findService(p *project, name string) (domain.Service, bool) {
 	return domain.Service{}, false
 }
 
-// servicesInGroup returns every service whose Group has group as a
-// prefix (so a subgroup like ["backend","auth"] is included when
-// asking for "backend"), for `godev run <group>`.
-func servicesInGroup(services []domain.Service, group string) []domain.Service {
-	var out []domain.Service
+// resolveTargets expands `godev run <target>...` into the deduplicated
+// set of services those targets name, preserving first-appearance
+// order. Each target is matched as a group name first (Group[0], so a
+// subgroup like ["backend","auth"] matches a request for "backend"),
+// then as an exact service name - group match takes precedence so a
+// bare word like "core" expands to every service in that group even
+// if a single service happens to share the name. A service reachable
+// through more than one requested target (its own name plus a group
+// it belongs to, or two overlapping groups) is only included once.
+// Every target must resolve to at least one service, or the whole
+// call fails listing everything that didn't match, so a typo doesn't
+// silently start a smaller set than the user asked for.
+func resolveTargets(services []domain.Service, targets []string) ([]domain.Service, error) {
+	byName := make(map[string]domain.Service, len(services))
 	for _, s := range services {
-		if len(s.Group) > 0 && s.Group[0] == group {
-			out = append(out, s)
+		byName[s.Name] = s
+	}
+
+	seen := make(map[string]bool, len(services))
+	var out []domain.Service
+	var unmatched []string
+
+	for _, target := range targets {
+		matched := false
+		for _, s := range services {
+			if len(s.Group) > 0 && s.Group[0] == target {
+				matched = true
+				if !seen[s.Name] {
+					seen[s.Name] = true
+					out = append(out, s)
+				}
+			}
+		}
+		if !matched {
+			if s, ok := byName[target]; ok {
+				matched = true
+				if !seen[s.Name] {
+					seen[s.Name] = true
+					out = append(out, s)
+				}
+			}
+		}
+		if !matched {
+			unmatched = append(unmatched, target)
 		}
 	}
-	return out
+
+	if len(unmatched) > 0 {
+		return nil, fmt.Errorf("no group or service named %s", strings.Join(unmatched, ", "))
+	}
+	return out, nil
 }
 
 // applyJetBrainsImport enriches discovered Go services (matched by

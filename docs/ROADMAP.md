@@ -44,9 +44,16 @@ lowest priority, useful eventually, not urgent.
   first (unchanged for projects with no groups), then each group under
   a header, in first-seen order - not sorted, not collapsible (that's
   a possible later refinement, not required for grouping to be useful).
-- **`godev run <group>`**: opens the TUI scoped to one named group
-  (`cmd/godev/commands.go`'s `cmdRunGroup`, filtering via
-  `servicesInGroup`). `godev` (bare) is unchanged. A group can mix Go
+- **`godev run <target>...`**: opens the TUI scoped to any mix of group
+  names and individual service names (`cmd/godev/commands.go`'s
+  `cmdRun`, resolving via `resolveTargets` in `setup.go`). Each target
+  is matched as a group first, then as an exact service name; a
+  service reachable through more than one requested target (its own
+  name plus a group it's in, or two overlapping groups) still only
+  runs once - `resolveTargets` dedupes by service name as it walks the
+  target list. An unmatched target fails the whole call (listing every
+  target that didn't match) rather than silently starting a smaller
+  set than asked for. `godev` (bare) is unchanged. A group can mix Go
   and command-based services freely - hot reload still means "watch →
   rebuild → restart" for a Go service and "watch → restart" for a
   command-based one, since the latter's build step is already a no-op.
@@ -93,6 +100,23 @@ agent and a developer's own `godev` TUI can't operate on the same
 project's services at once if MCP spins up its own separate
 `Supervisor` instance each time. Phase 3 below removes that limitation
 once it exists; it is not a blocker for shipping Phase 2 first.
+
+**Design constraint carried over from `godev run`**: a `godev mcp`
+process is scoped to one project root, exactly like every other godev
+invocation today (`loadProject` always resolves from the current
+working directory) — nothing in the codebase is global. The same AI
+agent, or several different agents, must be able to run `godev mcp`
+concurrently against different projects without any cross-talk, the
+same way `godev run <target>...` in one project's directory never
+touches another project's services. Concretely: an MCP tool call
+should never take a "project" argument that could be pointed anywhere
+on disk — a given `godev mcp` process serves exactly the project root
+it was started in (mirroring `godev run`/`godev`), so isolation is
+structural (one OS process per project) rather than something the tool
+layer has to enforce by checking arguments. This also means the
+project-scoped cache-dir hashing already used for the build cache
+(`builder.New`) is the right pattern to reuse for anything Phase 2/3
+needs to key per-project (a future daemon socket path, in particular).
 
 ## Phase 3 — Local daemon/API layer
 

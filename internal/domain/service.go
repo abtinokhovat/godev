@@ -26,7 +26,7 @@ type Service struct {
 	AutoRestart bool
 	HotReload   bool
 	Watch       WatchConfig
-	Group       []string // hierarchical group path for the TUI sidebar and `godev run <group>`; empty = ungrouped
+	Group       []string // hierarchical group path for the TUI sidebar and `godev run`; empty = ungrouped
 }
 
 // IsCommand reports whether this service runs an explicit command
