@@ -194,7 +194,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case "c":
 		if m.view == ViewLogs {
-			m.sup.Logs().Clear()
+			m.sup.ClearLogs()
 			m.logLines = nil
 		}
 		return m, nil

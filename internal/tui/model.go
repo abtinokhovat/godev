@@ -37,7 +37,7 @@ type logLine struct {
 
 // Model is the Bubble Tea model driving the whole TUI.
 type Model struct {
-	sup     *application.Supervisor
+	sup     Source
 	project string
 
 	services []domain.Service
@@ -70,9 +70,9 @@ type Model struct {
 	quitting bool
 }
 
-// New builds the initial Model for a supervisor already populated with
+// New builds the initial Model for a Source already populated with
 // discovered/configured services.
-func New(sup *application.Supervisor, project string) Model {
+func New(sup Source, project string) Model {
 	services := sup.Services()
 	runtimes := make(map[string]domain.ServiceRuntime, len(services))
 	for _, svc := range services {
@@ -80,8 +80,8 @@ func New(sup *application.Supervisor, project string) Model {
 			runtimes[svc.Name] = rt
 		}
 	}
-	eventsCh, _ := sup.Events().Subscribe(64)
-	logsCh, _ := sup.Logs().Subscribe(256)
+	eventsCh, _ := sup.SubscribeEvents(64)
+	logsCh, _ := sup.SubscribeLogs(256)
 
 	m := Model{
 		sup:         sup,

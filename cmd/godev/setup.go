@@ -122,6 +122,24 @@ func resolveTargets(services []domain.Service, targets []string) ([]domain.Servi
 	return out, nil
 }
 
+// resolveRunServices is resolveTargets with one relaxation: an empty
+// target list means every service, matching bare `godev`'s behavior -
+// used by the detach/daemon path, where "run everything" (`godev
+// --detach`) and "run this subset" (`godev run <target>... --detach`)
+// share one code path. A non-empty target list still goes through
+// resolveTargets, so a typo is reported rather than silently starting
+// a smaller set.
+func resolveRunServices(p *project, targets []string) ([]domain.Service, string, error) {
+	if len(targets) == 0 {
+		return p.Services, "all services", nil
+	}
+	services, err := resolveTargets(p.Services, targets)
+	if err != nil {
+		return nil, "", err
+	}
+	return services, strings.Join(targets, ", "), nil
+}
+
 // applyJetBrainsImport enriches discovered Go services (matched by
 // directory) with args/env/group from a matching JetBrains run
 // configuration, and adds every other recognized configuration type as

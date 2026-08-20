@@ -93,6 +93,10 @@ rebuild-and-restart of every hot-reload-enabled service.
 godev list                 # list discovered/configured services, with groups
 godev run <target>...      # open the TUI scoped to the given groups
                             # and/or individual services
+godev [run <target>...] --detach
+                            # run in the background instead of opening the TUI
+godev attach                # reattach the TUI to a --detach'd instance
+godev kill                   # stop a --detach'd instance
 godev init                 # write a starter .godev.yaml
 godev debug <service>      # build a debug binary, start headless Delve,
                             # print VS Code / GoLand attach instructions
@@ -100,6 +104,23 @@ godev mcp                  # serve this project's services to an AI agent
                             # over MCP (stdio), for it to run/inspect/debug
 godev <service> [-- args]  # run one service in the foreground, with
                             # hot reload, passing one-off arguments
+```
+
+### Running detached
+
+`godev --detach` (everything) or `godev run <target>... --detach` (a
+scoped subset) starts services in the background instead of opening
+the TUI, and returns immediately — the services keep running after the
+launching shell exits. Only one detached instance runs per project at
+a time; a second `--detach` is refused with a pointer to the commands
+below instead of silently starting a competing instance.
+
+```sh
+godev attach   # opens the normal TUI against the running instance —
+               # live logs, and restart/stop/debug act on the real
+               # processes, exactly like the foreground TUI
+godev kill     # stops it; waits for it to actually exit before
+               # reporting success
 ```
 
 ### Attaching a debugger
