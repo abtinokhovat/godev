@@ -16,7 +16,21 @@ manages debugging (for Go services). Your IDE remains the debugger UI.
 
 ## Install
 
-Download a prebuilt binary from the [Releases page](https://github.com/abtinokhovat/godev/releases) (Linux, macOS, and Windows, amd64/arm64 where applicable — built by [`.github/workflows/release.yml`](.github/workflows/release.yml) on every `vX.Y.Z` tag), or build from source:
+**Linux or macOS**, one line — downloads the latest release binary and puts it on your PATH ([`install.sh`](./install.sh) source):
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/abtinokhovat/godev/main/install.sh | sh
+```
+
+Pin a version or choose the install location with `VERSION`/`INSTALL_DIR`:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/abtinokhovat/godev/main/install.sh | VERSION=v0.2.0 INSTALL_DIR="$HOME/bin" sh
+```
+
+**Windows**, or to install manually on any OS: grab the matching archive from the [Releases page](https://github.com/abtinokhovat/godev/releases) (built by [`.github/workflows/release.yml`](.github/workflows/release.yml) on every `vX.Y.Z` tag) and put the binary on your PATH yourself.
+
+**From source** (any OS with Go installed):
 
 ```sh
 go install github.com/abtinokhovat/godev/cmd/godev@latest
