@@ -21,6 +21,7 @@ func (s *Supervisor) WatchAndReload(debounceMs int) (func(), error) {
 	if err != nil {
 		return nil, err
 	}
+	s.SetWatchActive(true)
 
 	go func() {
 		for change := range w.Changes() {
@@ -30,7 +31,7 @@ func (s *Supervisor) WatchAndReload(debounceMs int) (func(), error) {
 		}
 	}()
 
-	return func() { w.Close() }, nil
+	return func() { s.SetWatchActive(false); w.Close() }, nil
 }
 
 func (s *Supervisor) reloadHotReloadServices() {

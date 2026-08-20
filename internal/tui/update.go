@@ -1,8 +1,17 @@
 package tui
 
 import (
+	"time"
+
 	tea "github.com/charmbracelet/bubbletea"
+
+	"github.com/abtinokhovat/godev/internal/application"
 )
+
+// buildSettleDelay is how long the Build view stays up after a build
+// finishes before auto-returning to whatever view was showing before,
+// so the user has a moment to see the result.
+const buildSettleDelay = 1200 * time.Millisecond
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
@@ -17,7 +26,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleEvent(msg)
 
 	case logMsg:
-		m.logLines = append(m.logLines, logLine{service: msg.Service, stream: msg.Stream, text: msg.Message})
+		m.logLines = append(m.logLines, logLine{
+			service: msg.Service, stream: msg.Stream, time: msg.Time, text: msg.Message,
+		})
 		if len(m.logLines) > m.maxLogLines {
 			m.logLines = m.logLines[len(m.logLines)-m.maxLogLines:]
 		}
@@ -25,17 +36,47 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tickMsg:
 		return m, tickCmd()
+
+	case returnFromBuildMsg:
+		if m.autoBuildView && m.view == ViewBuild && time.Now().After(m.returnAt) {
+			m.view = m.autoReturnView
+			m.autoBuildView = false
+		}
+		return m, nil
 	}
 	return m, nil
 }
 
+// handleEvent must always keep listening for further events - every
+// return path has to include listenEvents(m.eventsCh), or the whole
+// event stream (and with it every sidebar status update) stalls
+// permanently the moment this function returns without it.
 func (m Model) handleEvent(e eventMsg) (tea.Model, tea.Cmd) {
-	// Refresh every known service's runtime snapshot; cheap for MVP scale.
 	for _, svc := range m.services {
 		if rt, ok := m.sup.Runtime(svc.Name); ok {
 			m.runtimes[svc.Name] = rt
 		}
 	}
+
+	svc, hasSelection := m.selectedService()
+	isSelected := hasSelection && e.Service == svc.Name
+
+	cmds := []tea.Cmd{listenEvents(m.eventsCh)}
+
+	switch e.Type {
+	case application.EventBuildStarted:
+		if isSelected && m.view != ViewBuild {
+			m.autoBuildView = true
+			m.autoReturnView = m.view
+			m.view = ViewBuild
+		}
+	case application.EventBuildSucceeded, application.EventBuildFailed:
+		if isSelected && m.autoBuildView {
+			m.returnAt = time.Now().Add(buildSettleDelay)
+			cmds = append(cmds, tea.Tick(buildSettleDelay, func(time.Time) tea.Msg { return returnFromBuildMsg{} }))
+		}
+	}
+
 	if e.Message != "" {
 		m.status = string(e.Type) + ": " + e.Message
 	} else if e.Err != nil {
@@ -43,7 +84,7 @@ func (m Model) handleEvent(e eventMsg) (tea.Model, tea.Cmd) {
 	} else {
 		m.status = string(e.Type)
 	}
-	return m, listenEvents(m.eventsCh)
+	return m, tea.Batch(cmds...)
 }
 
 func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -55,21 +96,52 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "up", "k":
 		if m.selected > 0 {
 			m.selected--
+			m.scroll = 0
 		}
 		return m, nil
 
 	case "down", "j":
 		if m.selected < len(m.services)-1 {
 			m.selected++
+			m.scroll = 0
 		}
 		return m, nil
 
 	case "enter":
-		m.detail = !m.detail
+		if svc, ok := m.selectedService(); ok {
+			m.logScope = svc.Name
+			m.view = ViewLogs
+			m.scroll = 0
+		}
 		return m, nil
 
-	case "esc":
-		m.detail = false
+	case "a":
+		m.logScope = ""
+		m.view = ViewLogs
+		return m, nil
+
+	case "tab":
+		m.expanded = !m.expanded
+		return m, nil
+
+	case "1", "f1":
+		m.view = ViewLogs
+		m.autoBuildView = false
+		return m, nil
+
+	case "2", "f2":
+		m.view = ViewBuild
+		m.autoBuildView = false
+		return m, nil
+
+	case "3", "f3":
+		m.view = ViewProblems
+		m.autoBuildView = false
+		return m, nil
+
+	case "4", "f4":
+		m.view = ViewDebugger
+		m.autoBuildView = false
 		return m, nil
 
 	case "r":
@@ -94,30 +166,37 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "d":
 		if svc, ok := m.selectedService(); ok {
 			rt, _ := m.sup.Runtime(svc.Name)
+			debugging := rt.Debug != nil
 			go func() {
-				if rt.Debug != nil {
+				if debugging {
 					m.sup.StopDebug(svc.Name)
 				} else {
 					m.sup.StartDebug(svc.Name)
 				}
 			}()
+			if !debugging {
+				m.view = ViewDebugger
+				m.autoBuildView = false
+			}
 		}
 		return m, nil
 
 	case "pgup":
-		m.logScroll += 10
+		m.scroll += 10
 		return m, nil
 
 	case "pgdown":
-		m.logScroll -= 10
-		if m.logScroll < 0 {
-			m.logScroll = 0
+		m.scroll -= 10
+		if m.scroll < 0 {
+			m.scroll = 0
 		}
 		return m, nil
 
 	case "c":
-		m.sup.Logs().Clear()
-		m.logLines = nil
+		if m.view == ViewLogs {
+			m.sup.Logs().Clear()
+			m.logLines = nil
+		}
 		return m, nil
 	}
 	return m, nil

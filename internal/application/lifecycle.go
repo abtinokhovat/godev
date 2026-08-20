@@ -20,9 +20,11 @@ func (s *Supervisor) build(e *serviceEntry, name string) (builder.Result, error)
 
 	res, err := s.builder.Build(e.svc, builder.ModeNormal)
 	if err != nil {
+		s.recordBuild(e, builder.Result{Success: false, Output: err.Error()})
 		s.events.Publish(Event{Type: EventBuildFailed, Service: name, Err: err})
 		return res, err
 	}
+	s.recordBuild(e, res)
 	if !res.Success {
 		s.mu.Lock()
 		e.runtime.State = domain.StateBuildFailed
