@@ -29,6 +29,7 @@ var (
 	styleWarn        = lipgloss.NewStyle().Foreground(lipgloss.Color("220"))
 	styleDim         = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
 	styleLabel       = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
+	styleGroupHeader = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("111"))
 )
 
 const (

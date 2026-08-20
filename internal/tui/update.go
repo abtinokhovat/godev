@@ -94,15 +94,15 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 
 	case "up", "k":
-		if m.selected > 0 {
-			m.selected--
+		if prev, ok := m.adjacentSelection(-1); ok {
+			m.selected = prev
 			m.scroll = 0
 		}
 		return m, nil
 
 	case "down", "j":
-		if m.selected < len(m.services)-1 {
-			m.selected++
+		if next, ok := m.adjacentSelection(1); ok {
+			m.selected = next
 			m.scroll = 0
 		}
 		return m, nil

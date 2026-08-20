@@ -14,9 +14,10 @@ func testModel(t *testing.T) Model {
 	t.Helper()
 	sup, err := application.NewSupervisor(t.TempDir(), []domain.Service{
 		{Name: "api", Package: "./cmd/api", Directory: t.TempDir(), Args: []string{"--port", "8080"},
-			Env: map[string]string{"LOG_LEVEL": "debug"}, AutoRestart: true, HotReload: true},
-		{Name: "worker", Package: "./cmd/worker", Directory: t.TempDir(), AutoRestart: true},
+			Env: map[string]string{"LOG_LEVEL": "debug"}, AutoRestart: true, HotReload: true, Group: []string{"core"}},
+		{Name: "worker", Package: "./cmd/worker", Directory: t.TempDir(), AutoRestart: true, Group: []string{"core"}},
 		{Name: "scheduler", Package: "./cmd/scheduler", Directory: t.TempDir()},
+		{Name: "web", Command: []string{"npm", "run", "dev"}, Directory: t.TempDir(), Group: []string{"frontend"}},
 	})
 	if err != nil {
 		t.Fatalf("NewSupervisor: %v", err)

@@ -1,8 +1,9 @@
 # Copy to .godev.yaml at your project root to override discovery
-# defaults. Every field is optional; godev works with zero config.
+# defaults, or to add services of your own. Every field is optional;
+# godev works with zero config for conventional Go projects.
 services:
+  # Overrides for a service discovery already found (matched by name).
   api:
-    path: ./cmd/api
     args:
       - --port
       - "8080"
@@ -11,13 +12,27 @@ services:
     auto_start: true
     auto_restart: true
     hot_reload: true
+    group: [core]
   worker:
-    path: ./cmd/worker
     args:
       - --concurrency
       - "10"
     auto_start: true
     hot_reload: true
+    group: [core]
   scheduler:
-    path: ./cmd/scheduler
     auto_start: false
+    # path repoints which Go package this service name builds, e.g.
+    # after a directory rename - only meaningful for a service
+    # discovery already found.
+    path: ./cmd/scheduler-v2
+
+  # A standalone (non-Go) service: no discovered counterpart, so
+  # "command" is required - godev execs it directly, with no build
+  # step. Works for any language, not just JS.
+  web:
+    command: ["npm", "run", "dev"]
+    directory: frontend # relative to the project root, or absolute
+    env:
+      PORT: "3000"
+    group: [core]

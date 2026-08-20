@@ -1,13 +1,18 @@
 # godev
 
-A zero-configuration development environment manager for multi-service Go
-projects. Point it at a project and it discovers every runnable (`main`)
-package, runs each as its own process, hot-reloads on source changes,
-restarts crashed services with backoff, and can launch headless Delve for
-VS Code or GoLand to attach to — all from a terminal UI.
+A zero-configuration development environment manager, built around Go
+projects but not limited to them. Point it at a project and it
+discovers every runnable Go `main` package, runs each as its own
+process, hot-reloads on source changes, restarts crashed services with
+backoff, and can launch headless Delve for VS Code or GoLand to attach
+to — all from a terminal UI. Non-Go services (or anything else you want
+managed alongside your Go services) come in through explicit
+configuration — a `.godev.yaml` entry or an imported JetBrains run
+configuration — rather than heuristic guessing, and can be grouped and
+run together with `godev run <group-or-service>...`.
 
 `godev` manages development. [Delve](https://github.com/go-delve/delve)
-manages debugging. Your IDE remains the debugger UI.
+manages debugging (for Go services). Your IDE remains the debugger UI.
 
 ## Install
 
@@ -83,7 +88,9 @@ rebuild-and-restart of every hot-reload-enabled service.
 ### Other commands
 
 ```sh
-godev list                 # list discovered/configured services
+godev list                 # list discovered/configured services, with groups
+godev run <target>...      # open the TUI scoped to the given groups
+                            # and/or individual services
 godev init                 # write a starter .godev.yaml
 godev debug <service>      # build a debug binary, start headless Delve,
                             # print VS Code / GoLand attach instructions
@@ -118,28 +125,83 @@ the same way; the detail view (`enter`) shows the live endpoint.
 
 ## Configuration
 
-Configuration is entirely optional — discovery alone produces a working
-service list for conventional `cmd/<name>` layouts. To customize
-arguments, environment variables, or auto-start/restart/reload behavior
-per service, copy [`.godev.example.yaml`](./.godev.example.yaml) to
-`.godev.yaml` at your project root (or run `godev init`), or run:
+Configuration is entirely optional for Go services — discovery alone
+produces a working service list for conventional `cmd/<name>` layouts.
+To customize arguments, environment variables, or auto-start/restart/
+reload behavior per service, copy
+[`.godev.example.yaml`](./.godev.example.yaml) to `.godev.yaml` at your
+project root (or run `godev init`).
 
-```sh
-godev init
+A `.godev.yaml` entry either overrides fields on a service discovery
+already found (matched by name), or, if `command` is set, defines a
+brand new **standalone service** — see below.
+
+## Other services & grouping
+
+godev never heuristically guesses at non-Go projects (no scanning for
+`package.json` scripts or bare entrypoints). Instead, any service - Go
+or not - is added through one of two explicit sources:
+
+**A manual `.godev.yaml` entry**, with a `command` godev execs directly
+(no build step):
+
+```yaml
+services:
+  web:
+    command: ["npm", "run", "dev"]
+    directory: frontend       # relative to the project root, or absolute
+    env:
+      PORT: "3000"
+    group: [core]
 ```
 
-Config overrides only affect services discovery already found — it
-can't invent new ones — and merges on top of discovery in this order:
-discovery → defaults → `.godev.yaml` → one-off CLI args.
+**An imported JetBrains run configuration** — if `.idea/runConfigurations/`
+exists, godev reads it (read-only; nothing is ever written back) on
+every load. `GoApplicationRunConfiguration` entries enrich a matching
+discovered Go service (by working directory) with its arguments,
+environment, and folder as `group` - they don't create a new service.
+`NodeJSConfigurationType`, npm, and `ShConfigurationType`
+("Shell Script") entries become standalone services the same way a
+manual `command` entry does. Other configuration types are ignored.
+
+A service's `group` (a `.godev.yaml` field, or a JetBrains
+configuration's folder) organizes the TUI sidebar into a tree, and
+`godev run <target>...` opens the TUI scoped to whatever mix of groups
+and individual service names you give it - e.g. `godev run core` if
+`web` above is grouped with some Go services named `core`, or
+`godev run core web api` to combine a group with extra individual
+services. Each matching service runs exactly once even if more than
+one requested target resolves to it (a service in two overlapping
+groups, or a group plus that same service named explicitly). Groups
+can mix Go and non-Go services freely: each service's own settings
+decide its behavior within the group - a Go service still gets the
+full hot-reload pipeline (watch → rebuild → restart), a command-based
+service gets hot reload without a rebuild step (there's nothing to
+build), since a command-based service's build step is an instant
+no-op to begin with.
+
+Debugging (currently Delve-only) is not available for command-based
+services - `godev debug <service>` and the TUI's `d` key report a clear
+error rather than silently failing.
+
+Merge order (later wins): discovery (`go list`) → JetBrains import →
+`.godev.yaml` → one-off CLI args (for `godev <service> -- args`).
 
 ## How it works
 
 - **Discovery** (`internal/discovery`): `go list -json ./...`, filtered
   to `Name == "main"` packages. No source parsing.
+- **JetBrains import** (`internal/discovery/jetbrains`): read-only
+  parsing of `.idea/runConfigurations/*.xml`, mapping known
+  configuration types to service fields and enriching or adding to the
+  discovered list. Never writes back to `.idea/`.
 - **Build** (`internal/builder`): `go build` into a per-project cache
   under `~/.cache/godev/<project-id>/<service>/`, installed via atomic
   rename so a failed build never destroys the last good binary. Debug
-  builds add `-gcflags=all=-N -l`.
+  builds add `-gcflags=all=-N -l`. Command-based (non-Go) services skip
+  this entirely - there's nothing to build, so `Supervisor` treats their
+  build step as an instant no-op and execs their configured command
+  directly.
 - **Process** (`internal/process`): each service is its own OS process
   in its own process group (so stopping it also stops its children),
   started with `os.Environ()` plus service-specific overrides.
@@ -164,3 +226,11 @@ godev is a process/development environment manager, not an IDE. It does
 not implement a debugger UI, DAP, breakpoint/variable/stack viewers,
 Docker/Kubernetes management, or remote development. VS Code and GoLand
 remain the debugger UI; Delve remains the debugger.
+
+## Roadmap
+
+Manual and JetBrains-imported run configurations for non-Go services,
+plus grouping and `godev run <target>...`, are implemented (see above).
+Still planned: an MCP server so AI agents can run and debug services
+through godev, a local daemon/API, and (lowest priority) IDE
+extensions — tracked in [`docs/ROADMAP.md`](./docs/ROADMAP.md).
