@@ -180,8 +180,11 @@ func (s *Supervisor) log(name string, stream logs.Stream, msg string) {
 	s.logsMgr.Publish(logs.Event{Service: name, Stream: stream, Message: msg})
 }
 
-// StartAll starts every service configured with AutoStart, per the
-// "discover 3 services -> present them running" flow in section 8.
+// StartAll starts every service configured with AutoStart. This is
+// for a bare invocation with nothing named explicitly (plain `godev`,
+// or `godev --detach` with no target) - what runs is entirely up to
+// each service's own auto_start setting, which defaults to false, so
+// a bare invocation with no configured auto-starters starts nothing.
 func (s *Supervisor) StartAll() {
 	for _, name := range s.order {
 		e, _ := s.entry(name)
@@ -192,6 +195,21 @@ func (s *Supervisor) StartAll() {
 				}
 			}(name)
 		}
+	}
+}
+
+// StartServices starts exactly the named services, regardless of each
+// one's AutoStart setting - for when the caller named what to run
+// explicitly (`godev run <target>...`), where being asked for by name
+// is itself the start signal, distinct from StartAll's "whatever's
+// configured to start on a bare invocation".
+func (s *Supervisor) StartServices(names []string) {
+	for _, name := range names {
+		go func(n string) {
+			if err := s.Start(n); err != nil {
+				s.log(n, logs.StreamSystem, "start failed: "+err.Error())
+			}
+		}(name)
 	}
 }
 

@@ -15,7 +15,6 @@ import (
 	"github.com/abtinokhovat/godev/internal/application"
 	"github.com/abtinokhovat/godev/internal/config"
 	"github.com/abtinokhovat/godev/internal/debugger"
-	"github.com/abtinokhovat/godev/internal/discovery"
 	"github.com/abtinokhovat/godev/internal/domain"
 	"github.com/abtinokhovat/godev/internal/logs"
 	"github.com/abtinokhovat/godev/internal/mcpserver"
@@ -45,18 +44,50 @@ func printLogsToStdout(sup *application.Supervisor) func() {
 }
 
 func cmdRoot() int {
+	if err := ensureConfigured(); err != nil {
+		fmt.Fprintln(os.Stderr, "error:", err)
+		return 1
+	}
 	p, err := loadProject()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
 		return 1
 	}
 
-	fmt.Printf("Discovered %d service(s) in %s:\n", len(p.Services), p.Root)
+	fmt.Printf("%d service(s) in %s:\n", len(p.Services), p.Root)
 	for _, s := range p.Services {
 		fmt.Printf("  %-16s %s\n", s.Name, serviceSource(s))
 	}
 
-	return runTUI(p, p.Services, filepath.Base(p.Root))
+	return runTUI(p, p.Services, filepath.Base(p.Root), nil)
+}
+
+// ensureConfigured runs the interactive `godev init` flow inline the
+// first time a project has no .godev.yaml yet, so a fresh project
+// still only takes one command to get going - but the scan it takes
+// to get there only ever happens this once, not on every subsequent
+// `godev` invocation (see loadProject). A project that's already
+// configured (even with zero services, which loadProject will reject
+// on its own with a clearer message) is left untouched.
+func ensureConfigured() error {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return err
+	}
+	root, isGoModule, err := resolveRoot(cwd)
+	if err != nil {
+		return err
+	}
+	cfg, err := config.Load(root)
+	if err != nil {
+		return fmt.Errorf("loading %s: %w", config.FileName, err)
+	}
+	if cfg != nil && len(cfg.Services) > 0 {
+		return nil
+	}
+	fmt.Printf("No %s found in %s - let's set one up.\n\n", config.FileName, root)
+	_, err = runInitFlow(root, isGoModule)
+	return err
 }
 
 // cmdRun opens the TUI scoped to the given targets, e.g.
@@ -65,6 +96,10 @@ func cmdRoot() int {
 // so a service shared by two requested groups still only runs once.
 // It never affects services outside the resolved set.
 func cmdRun(targets []string) int {
+	if err := ensureConfigured(); err != nil {
+		fmt.Fprintln(os.Stderr, "error:", err)
+		return 1
+	}
 	p, err := loadProject()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
@@ -82,7 +117,11 @@ func cmdRun(targets []string) int {
 		fmt.Printf("  %-16s %s\n", s.Name, serviceSource(s))
 	}
 
-	return runTUI(p, services, filepath.Base(p.Root)+" · "+label)
+	names := make([]string, len(services))
+	for i, s := range services {
+		names[i] = s.Name
+	}
+	return runTUI(p, services, filepath.Base(p.Root)+" · "+label, names)
 }
 
 func serviceSource(s domain.Service) string {
@@ -94,14 +133,23 @@ func serviceSource(s domain.Service) string {
 
 // runTUI builds a Supervisor scoped to exactly the given services,
 // starts them, and runs the TUI until the user quits or the process is
-// signaled, then shuts everything down gracefully.
-func runTUI(p *project, services []domain.Service, label string) int {
+// signaled, then shuts everything down gracefully. startNames, when
+// non-nil, starts exactly those services regardless of their
+// auto_start setting - the caller named them explicitly (`godev run
+// <target>...`), which is itself the signal to start them. nil means
+// a bare invocation: only what's configured to auto-start actually
+// starts.
+func runTUI(p *project, services []domain.Service, label string, startNames []string) int {
 	sup, err := application.NewSupervisor(p.Root, services)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
 		return 1
 	}
-	sup.StartAll()
+	if startNames != nil {
+		sup.StartServices(startNames)
+	} else {
+		sup.StartAll()
+	}
 
 	stopWatch, err := sup.WatchAndReload(200)
 	if err != nil {
@@ -186,52 +234,28 @@ func cmdList() int {
 	return 0
 }
 
+// cmdInit is godev's only entry point for discovery: it runs `go
+// list`/JetBrains import once, lets the user pick exactly which
+// results become services (renaming any of them first, if the
+// auto-derived name isn't the one they want), and writes the result
+// into .godev.yaml with auto_start left off. Every other command only
+// ever reads .godev.yaml - see loadProject - so this is also the only
+// command whose runtime cost scales with project size.
 func cmdInit() int {
 	cwd, err := os.Getwd()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
 		return 1
 	}
-	root, err := discovery.FindProjectRoot(cwd)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "error: not a Go project: no go.mod found")
-		return 1
-	}
-
-	cfgPath := filepath.Join(root, config.FileName)
-	if _, err := os.Stat(cfgPath); err == nil {
-		fmt.Fprintf(os.Stderr, "error: %s already exists\n", cfgPath)
-		return 1
-	}
-
-	apps, err := discovery.Discover(root)
+	root, isGoModule, err := resolveRoot(cwd)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
 		return 1
 	}
-	if len(apps) == 0 {
-		fmt.Fprintln(os.Stderr, "error: no main packages found")
+	if _, err := runInitFlow(root, isGoModule); err != nil {
+		fmt.Fprintln(os.Stderr, "error:", err)
 		return 1
 	}
-
-	fmt.Printf("Discovered %d Go application(s):\n", len(apps))
-	f := config.File{Services: map[string]config.ServiceConfig{}}
-	trueVal := true
-	for _, a := range apps {
-		fmt.Printf("  ✓ %s\n    %s\n", a.Name, a.Package)
-		f.Services[a.Name] = config.ServiceConfig{
-			Path:        a.Package,
-			AutoStart:   &trueVal,
-			AutoRestart: &trueVal,
-			HotReload:   &trueVal,
-		}
-	}
-
-	if err := writeConfig(cfgPath, f); err != nil {
-		fmt.Fprintln(os.Stderr, "error writing config:", err)
-		return 1
-	}
-	fmt.Printf("\nWrote %s\n", cfgPath)
 	return 0
 }
 
@@ -302,7 +326,6 @@ func cmdRunOne(name string, extraArgs []string) int {
 	if len(extraArgs) > 0 {
 		svc.Args = extraArgs // one-off args override config, per section 17
 	}
-	svc.AutoStart = true
 
 	sup, err := application.NewSupervisor(p.Root, []domain.Service{svc})
 	if err != nil {

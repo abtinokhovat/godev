@@ -199,6 +199,60 @@ process's PID changes, kill it, confirm the attached TUI notices the
 dropped connection and exits on its own, and confirm the socket/PID
 files are cleaned up.
 
+## Phase 3.5 — Discovery moved to `godev init`, nothing auto-runs by default (implemented)
+
+Triggered by real usage on a large (57-service) monorepo: `go list
+-json ./...` on every single `godev` invocation cost ~7s before the
+TUI even opened, and every discovered/imported service defaulted to
+`AutoStart: true` with no curation step, so opening the TUI then
+immediately spawned all 57 builds at once - including auto-imported
+JetBrains shell-script run configurations nobody had reviewed.
+
+- **Discovery is init-only.** `discovery.Discover`/`jetbrains.Import`
+  now only ever run inside `godev init` (`cmd/godev/initmenu.go`).
+  Every other command (`godev`, `run`, `list`, `mcp`, `--detach`, ...)
+  goes through `loadProject` (`cmd/godev/setup.go`), which only reads
+  `.godev.yaml` - no `go` invocation, no `.idea/` scan, regardless of
+  project size. Verified via a smoke test running `godev list` with
+  `go` removed from `PATH` entirely.
+- **`godev init` is interactive.** A small Bubble Tea checklist
+  (`initMenuModel`) lists every discovered/imported candidate (Go
+  configs enrich a matching candidate's args/env/group rather than
+  becoming their own row); `space` selects, `r` renames in place
+  before writing (the config key never has to match the discovered
+  directory/package name - fixes collision-suffixed names like
+  `core-2` permanently), `enter` writes the selection into
+  `.godev.yaml`. A re-run only ever offers names not already
+  configured - additive, never touches existing entries.
+- **`auto_start` defaults to `false`** for everything `godev init`
+  writes (`config.newStandaloneService` also gained a `path`-only
+  branch, since a `.godev.yaml` entry now has to be able to define a
+  brand new Go service on its own, not just override an
+  already-discovered one). A bare `godev` opens the TUI with
+  everything idle; naming a service or group explicitly
+  (`godev run <target>...`, or `--detach` with a target) starts it
+  regardless of `auto_start` - `Supervisor.StartServices` vs. the
+  existing `AutoStart`-gated `StartAll`, so explicit intent always
+  wins over the default.
+- **`godev` (bare) with no `.godev.yaml` yet** runs the same
+  interactive flow inline before opening the TUI, so a fresh project
+  still only takes one command - the scan only ever happens this once,
+  not on every subsequent invocation.
+- **Sidebar scrolling**: the SERVICES list is now a fixed-height,
+  independently scrollable viewport (`sidebarScroll`,
+  `sidebarMaxVisibleRows`, `scrollSidebarToSelection` in
+  `internal/tui/model.go`) with a `SERVICES 12-16/57`-style indicator
+  when it overflows; RUNTIME/DEBUGGER/detail always render in full
+  below it. Previously a large service list just got silently cut off
+  by `joinColumns`' blind per-line crop, hiding RUNTIME/DEBUGGER
+  entirely once the list overflowed.
+
+Verified end-to-end with tmux against a 60-service fixture: the init
+checklist, rename, selective confirm, the resulting TUI opening with
+0 running, `godev run <name>` starting a service despite
+`auto_start: false`, and the sidebar's scroll-follows-selection
+behavior all confirmed interactively, not just via unit tests.
+
 ## Phase 4 — IDE extensions (lowest priority)
 
 JetBrains first, then VS Code, then Zed — order confirmed by the

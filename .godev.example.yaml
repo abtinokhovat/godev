@@ -1,9 +1,16 @@
-# Copy to .godev.yaml at your project root to override discovery
-# defaults, or to add services of your own. Every field is optional;
-# godev works with zero config for conventional Go projects.
+# Copy to .godev.yaml at your project root, or let `godev init` write
+# it for you from an interactive checklist of discovered Go packages
+# and imported JetBrains run configurations. Every field but one of
+# path/command is optional. This is the only file godev reads to build
+# its service list - nothing here is re-discovered at runtime.
 services:
-  # Overrides for a service discovery already found (matched by name).
+  # A Go service: path is the import path godev builds with `go
+  # build`. auto_start defaults to false (what `godev init` writes) -
+  # set true only for services you always want running on a bare
+  # `godev`; everything else you start explicitly with `godev run
+  # <name>` or the TUI's `s` key.
   api:
+    path: ./cmd/api
     args:
       - --port
       - "8080"
@@ -14,22 +21,17 @@ services:
     hot_reload: true
     group: [core]
   worker:
+    path: ./cmd/worker
     args:
       - --concurrency
       - "10"
-    auto_start: true
     hot_reload: true
     group: [core]
-  scheduler:
-    auto_start: false
-    # path repoints which Go package this service name builds, e.g.
-    # after a directory rename - only meaningful for a service
-    # discovery already found.
-    path: ./cmd/scheduler-v2
 
-  # A standalone (non-Go) service: no discovered counterpart, so
-  # "command" is required - godev execs it directly, with no build
-  # step. Works for any language, not just JS.
+  # A non-Go service: command is required instead of path - godev
+  # execs it directly, with no build step. Works for any language, not
+  # just JS. Review what an imported script actually does before
+  # setting auto_start: true on it.
   web:
     command: ["npm", "run", "dev"]
     directory: frontend # relative to the project root, or absolute

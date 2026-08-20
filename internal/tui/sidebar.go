@@ -16,42 +16,75 @@ func (m Model) sidebarWidth() int {
 	return sidebarWidth
 }
 
+// renderSidebar lays out the sidebar as a fixed-height viewport: the
+// SERVICES list scrolls (windowed to whatever m.sidebarScroll/
+// sidebarMaxVisibleRows currently allow - see model.go), while
+// RUNTIME/DEBUGGER/detail always render in full below it, so overall
+// status stays visible no matter how many services there are.
 func (m Model) renderSidebar() []string {
 	w := m.sidebarWidth()
-	var lines []string
+	rows := m.groupedRows()
+	footer := m.renderSidebarFooter(w)
+	maxVisible := m.sidebarMaxVisibleRows()
 
-	lines = append(lines, styleSection.Render("SERVICES"), "")
-	for _, row := range m.groupedRows() {
-		if row.IsHeader {
-			lines = append(lines, "", styleGroupHeader.Render(truncate(row.Header, w)))
-			continue
-		}
-
-		svc := m.services[row.ServiceIndex]
-		rt := m.runtimes[svc.Name]
-		selected := row.ServiceIndex == m.selected
-		indent := ""
-		if len(svc.Group) > 0 {
-			indent = " "
-		}
-
-		nameLine := fmt.Sprintf("%s%s %-*s", indent, stateDot(rt.State), w-3-len(indent), truncate(svc.Name, w-4-len(indent)))
-		statusLine := indent + "  " + rt.State.String()
-		if rt.PID != 0 {
-			statusLine = fmt.Sprintf("%s  %s · PID %d", indent, rt.State.String(), rt.PID)
-		}
-		statusLine = truncate(statusLine, w)
-
-		if selected {
-			lines = append(lines, styleSelected.Render(padRight(nameLine, w)))
-			lines = append(lines, styleSelected.Render(padRight(statusLine, w)))
-		} else {
-			dot := lipgloss.NewStyle().Foreground(stateColor(rt.State)).Render(stateDot(rt.State))
-			lines = append(lines, indent+dot+" "+truncate(svc.Name, w-4-len(indent)))
-			lines = append(lines, styleDim.Render(statusLine))
-		}
+	start := m.sidebarScroll
+	if start < 0 {
+		start = 0
+	}
+	if maxStart := len(rows) - maxVisible; start > maxStart && maxStart >= 0 {
+		start = maxStart
+	}
+	end := start + maxVisible
+	if end > len(rows) {
+		end = len(rows)
 	}
 
+	title := "SERVICES"
+	if len(rows) > maxVisible {
+		title = fmt.Sprintf("SERVICES %d-%d/%d", start+1, end, len(rows))
+	}
+	lines := []string{styleSection.Render(title), ""}
+	for _, row := range rows[start:end] {
+		lines = append(lines, m.renderSidebarRow(row, w)...)
+	}
+
+	return append(lines, footer...)
+}
+
+// renderSidebarRow renders one groupedRows() entry as its two lines:
+// a group header ("" + group name), or a service's name+status pair.
+func (m Model) renderSidebarRow(row groupRow, w int) []string {
+	if row.IsHeader {
+		return []string{"", styleGroupHeader.Render(truncate(row.Header, w))}
+	}
+
+	svc := m.services[row.ServiceIndex]
+	rt := m.runtimes[svc.Name]
+	selected := row.ServiceIndex == m.selected
+	indent := ""
+	if len(svc.Group) > 0 {
+		indent = " "
+	}
+
+	nameLine := fmt.Sprintf("%s%s %-*s", indent, stateDot(rt.State), w-3-len(indent), truncate(svc.Name, w-4-len(indent)))
+	statusLine := indent + "  " + rt.State.String()
+	if rt.PID != 0 {
+		statusLine = fmt.Sprintf("%s  %s · PID %d", indent, rt.State.String(), rt.PID)
+	}
+	statusLine = truncate(statusLine, w)
+
+	if selected {
+		return []string{styleSelected.Render(padRight(nameLine, w)), styleSelected.Render(padRight(statusLine, w))}
+	}
+	dot := lipgloss.NewStyle().Foreground(stateColor(rt.State)).Render(stateDot(rt.State))
+	return []string{indent + dot + " " + truncate(svc.Name, w-4-len(indent)), styleDim.Render(statusLine)}
+}
+
+// renderSidebarFooter renders everything below the scrollable
+// services list: RUNTIME, DEBUGGER, and (when expanded) the selected
+// service's detail section. Always shown in full, never scrolled.
+func (m Model) renderSidebarFooter(w int) []string {
+	var lines []string
 	lines = append(lines, "", styleDivider.Render(strings.Repeat("─", w)))
 	lines = append(lines, styleSection.Render("RUNTIME"))
 	lines = append(lines, reloadStatusLine(m.sup.WatchActive()))

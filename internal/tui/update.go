@@ -17,6 +17,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
+		m.scrollSidebarToSelection()
 		return m, nil
 
 	case tea.KeyMsg:
@@ -97,6 +98,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if prev, ok := m.adjacentSelection(-1); ok {
 			m.selected = prev
 			m.scroll = 0
+			m.scrollSidebarToSelection()
 		}
 		return m, nil
 
@@ -104,6 +106,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if next, ok := m.adjacentSelection(1); ok {
 			m.selected = next
 			m.scroll = 0
+			m.scrollSidebarToSelection()
 		}
 		return m, nil
 
@@ -122,6 +125,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case "tab":
 		m.expanded = !m.expanded
+		m.scrollSidebarToSelection()
 		return m, nil
 
 	case "1", "f1":
