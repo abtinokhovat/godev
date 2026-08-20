@@ -167,8 +167,9 @@ remain the debugger UI; Delve remains the debugger.
 
 ## Roadmap
 
-Planned (not yet implemented) work — multi-runtime support beyond Go
-(starting with Node), a manual "add service" configuration flow,
-per-runtime debugging, service grouping, a JetBrains `.run` XML
-importer, a local daemon/API, and IDE extensions — is tracked in
+Planned (not yet implemented) work — manual and JetBrains-imported run
+configurations for non-Go services, service grouping and group-scoped
+runs (`godev run <group>`), an MCP server so AI agents can run and
+debug services through godev, a local daemon/API, and (lowest
+priority) IDE extensions — is tracked in
 [`docs/ROADMAP.md`](./docs/ROADMAP.md).
