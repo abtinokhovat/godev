@@ -1,6 +1,8 @@
 package tui
 
 import (
+	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/abtinokhovat/godev/internal/application"
@@ -91,6 +93,75 @@ func TestAdjacentSelectionSkipsGroupHeaders(t *testing.T) {
 	m.selected = indexByName(m, "scheduler")
 	if _, ok := m.adjacentSelection(-1); ok {
 		t.Fatalf("up from the first row should stay put (ok=false), got a valid next index")
+	}
+}
+
+func manyServicesTestModel(t *testing.T, n int) Model {
+	t.Helper()
+	services := make([]domain.Service, n)
+	for i := range services {
+		services[i] = domain.Service{Name: fmt.Sprintf("svc-%02d", i)}
+	}
+	sup, err := application.NewSupervisor(t.TempDir(), services)
+	if err != nil {
+		t.Fatalf("NewSupervisor: %v", err)
+	}
+	m := New(sup, "proj")
+	m.width, m.height = 100, 20 // small terminal: forces the services list to overflow
+	return m
+}
+
+func TestSidebarWindowsToFitAvailableHeight(t *testing.T) {
+	m := manyServicesTestModel(t, 50)
+	maxVisible := m.sidebarMaxVisibleRows()
+	if maxVisible >= 50 {
+		t.Fatalf("sidebarMaxVisibleRows() = %d, want fewer than 50 for a 20-row terminal", maxVisible)
+	}
+
+	lines := m.renderSidebar()
+	// 2 lines per visible row + "SERVICES x-y/n" + blank + the fixed
+	// RUNTIME/DEBUGGER footer - never all 50 services' worth of lines.
+	maxExpected := 2 + maxVisible*2 + len(m.renderSidebarFooter(m.sidebarWidth()))
+	if len(lines) > maxExpected {
+		t.Fatalf("renderSidebar() produced %d lines, want at most %d (should window, not render all 50 services)", len(lines), maxExpected)
+	}
+}
+
+func TestScrollSidebarToSelectionKeepsSelectionVisible(t *testing.T) {
+	m := manyServicesTestModel(t, 50)
+	maxVisible := m.sidebarMaxVisibleRows()
+
+	m.selected = indexByName(m, "svc-49") // last service
+	m.scrollSidebarToSelection()
+
+	rows := m.groupedRows()
+	idx := m.sidebarRowIndex(rows)
+	if idx < m.sidebarScroll || idx >= m.sidebarScroll+maxVisible {
+		t.Fatalf("selected row %d not within visible window [%d, %d)", idx, m.sidebarScroll, m.sidebarScroll+maxVisible)
+	}
+
+	// Rendering from this scrolled state must actually include the
+	// selected service's row, not just agree with the math above.
+	lines := m.renderSidebar()
+	found := false
+	for _, l := range lines {
+		if strings.Contains(l, "svc-49") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("renderSidebar() did not include the selected (scrolled-to) service svc-49")
+	}
+}
+
+func TestScrollSidebarClampsToValidRange(t *testing.T) {
+	m := manyServicesTestModel(t, 50)
+	m.sidebarScroll = 1_000_000 // pretend a resize left this stale/out of range
+	m.selected = indexByName(m, "svc-00")
+	m.scrollSidebarToSelection()
+	if m.sidebarScroll < 0 || m.sidebarScroll > 49 {
+		t.Fatalf("sidebarScroll = %d, want clamped into [0, 49]", m.sidebarScroll)
 	}
 }
 

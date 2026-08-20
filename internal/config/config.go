@@ -28,7 +28,7 @@ type File struct {
 // must set Command (and usually Directory), since there is no
 // discoverer to supply them.
 type ServiceConfig struct {
-	Path        string            `yaml:"path"`      // Go: import path override, e.g. "./cmd/api". Only meaningful for discovered Go services.
+	Path        string            `yaml:"path"`      // Go import path, e.g. "./cmd/api" - overrides a discovered service's package, or (with no discovered match) defines a brand new buildable Go service on its own. Mutually exclusive with Command.
 	Command     []string          `yaml:"command"`   // explicit run command for a standalone (non-Go) service, e.g. ["node","server.js"]
 	Directory   string            `yaml:"directory"` // working directory for a standalone service; relative paths resolve against the project root
 	Args        []string          `yaml:"args"`
@@ -101,27 +101,42 @@ func Merge(projectRoot string, discovered []domain.Service, cfg *File) ([]domain
 }
 
 // newStandaloneService builds a domain.Service purely from config, for
-// a name that discovery didn't find - the primary mechanism for
-// non-Go ("other") services.
+// a name that discovery didn't find - either a non-Go service (Command
+// set) or, since godev no longer discovers Go packages at runtime, a Go
+// service defined directly by its import path (Path set). The name
+// itself is just the .godev.yaml map key - it never has to match the
+// package/directory it points at, so renaming a service is a matter of
+// renaming its key, not moving code.
 func newStandaloneService(projectRoot, name string, sc ServiceConfig) (domain.Service, error) {
-	if len(sc.Command) == 0 {
-		return domain.Service{}, fmt.Errorf("no discovered service by this name, and no \"command\" given to define it as a standalone service")
+	switch {
+	case len(sc.Command) > 0 && sc.Path != "":
+		return domain.Service{}, fmt.Errorf("both \"command\" and \"path\" set - a service is either a Go package (path) or an explicit command, not both")
+	case len(sc.Command) == 0 && sc.Path == "":
+		return domain.Service{}, fmt.Errorf("no discovered service by this name, and neither \"command\" nor \"path\" given to define it")
 	}
+	isGo := sc.Path != ""
+
 	dir := sc.Directory
 	if dir == "" {
-		dir = projectRoot
+		if isGo {
+			dir = filepath.Join(projectRoot, strings.TrimPrefix(sc.Path, "./"))
+		} else {
+			dir = projectRoot
+		}
 	} else if !filepath.IsAbs(dir) {
 		dir = filepath.Join(projectRoot, dir)
 	}
 
 	svc := domain.Service{
 		Name:        name,
+		Package:     sc.Path,
 		Command:     sc.Command,
 		Directory:   dir,
 		Args:        sc.Args,
 		Env:         sc.Env,
 		AutoStart:   true,
 		AutoRestart: true,
+		HotReload:   isGo, // Go services rebuild-and-restart by default; command-based ones have nothing to rebuild, so it stays off unless explicitly requested
 		Group:       sc.Group,
 		Watch:       domain.WatchConfig(sc.Watch),
 	}

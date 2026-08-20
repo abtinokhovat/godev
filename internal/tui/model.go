@@ -43,11 +43,12 @@ type Model struct {
 	services []domain.Service
 	runtimes map[string]domain.ServiceRuntime
 
-	selected int
-	view     ViewMode
-	logScope string // "" = all services; otherwise a service name
-	expanded bool   // Tab: sidebar shows an extra detail section for the selection
-	scroll   int    // lines scrolled up from the bottom of the content pane; 0 = follow tail
+	selected      int
+	view          ViewMode
+	logScope      string // "" = all services; otherwise a service name
+	expanded      bool   // Tab: sidebar shows an extra detail section for the selection
+	scroll        int    // lines scrolled up from the bottom of the content pane; 0 = follow tail
+	sidebarScroll int    // index into groupedRows() of the first visible row; kept in view of m.selected
 
 	logLines    []logLine
 	maxLogLines int
@@ -222,4 +223,62 @@ func (m Model) adjacentSelection(delta int) (int, bool) {
 		return 0, false
 	}
 	return order[newPos], true
+}
+
+// sidebarRowIndex returns m.selected's position within rows, or -1 if
+// not present (e.g. no services).
+func (m Model) sidebarRowIndex(rows []groupRow) int {
+	for i, r := range rows {
+		if !r.IsHeader && r.ServiceIndex == m.selected {
+			return i
+		}
+	}
+	return -1
+}
+
+// sidebarMaxVisibleRows computes how many groupedRows() rows fit
+// alongside the sidebar's fixed RUNTIME/DEBUGGER/detail footer, given
+// the current terminal height. Shared by rendering (to pick the
+// visible window) and key handling (to scroll that window to follow
+// the selection) so the two can never disagree.
+func (m Model) sidebarMaxVisibleRows() int {
+	bodyHeight := m.height - 2 // header + footer
+	if bodyHeight < 1 {
+		bodyHeight = 1
+	}
+	footer := m.renderSidebarFooter(m.sidebarWidth())
+	available := bodyHeight - 2 - len(footer) // 2 = "SERVICES" title + blank line
+	maxVisible := available / 2               // every row (service or group header) renders as 2 lines
+	if maxVisible < 1 {
+		maxVisible = 1
+	}
+	return maxVisible
+}
+
+// scrollSidebarToSelection clamps m.sidebarScroll so the current
+// selection's row stays within the visible window - called whenever
+// the selection changes or the available height might have (resize,
+// expanding/collapsing the detail section).
+func (m *Model) scrollSidebarToSelection() {
+	rows := m.groupedRows()
+	maxVisible := m.sidebarMaxVisibleRows()
+	maxStart := len(rows) - maxVisible
+	if maxStart < 0 {
+		maxStart = 0
+	}
+
+	if idx := m.sidebarRowIndex(rows); idx >= 0 {
+		if idx < m.sidebarScroll {
+			m.sidebarScroll = idx
+		} else if idx >= m.sidebarScroll+maxVisible {
+			m.sidebarScroll = idx - maxVisible + 1
+		}
+	}
+
+	if m.sidebarScroll > maxStart {
+		m.sidebarScroll = maxStart
+	}
+	if m.sidebarScroll < 0 {
+		m.sidebarScroll = 0
+	}
 }

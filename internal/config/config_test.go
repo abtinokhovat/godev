@@ -161,6 +161,44 @@ func TestMergeStandaloneServiceAbsoluteDirectoryUnchanged(t *testing.T) {
 	}
 }
 
+func TestMergeAddsStandaloneGoServiceFromPath(t *testing.T) {
+	cfg := &File{Services: map[string]ServiceConfig{
+		"api": {Path: "./cmd/api"},
+	}}
+	got, err := Merge("/proj", nil, cfg)
+	if err != nil {
+		t.Fatalf("Merge: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("got %d services, want 1: %+v", len(got), got)
+	}
+	svc := got[0]
+	if svc.IsCommand() {
+		t.Errorf("a path-defined service should build, not exec a command")
+	}
+	if svc.Package != "./cmd/api" {
+		t.Errorf("Package = %q, want ./cmd/api", svc.Package)
+	}
+	if svc.Directory != "/proj/cmd/api" {
+		t.Errorf("Directory = %q, want /proj/cmd/api (derived from path)", svc.Directory)
+	}
+	if !svc.HotReload {
+		t.Errorf("a path-defined Go service should default HotReload to true")
+	}
+	if !svc.AutoStart || !svc.AutoRestart {
+		t.Errorf("should default AutoStart/AutoRestart to true like any other standalone service, got %+v", svc)
+	}
+}
+
+func TestMergeStandaloneServiceBothPathAndCommandErrors(t *testing.T) {
+	cfg := &File{Services: map[string]ServiceConfig{
+		"api": {Path: "./cmd/api", Command: []string{"echo", "hi"}},
+	}}
+	if _, err := Merge("/proj", nil, cfg); err == nil {
+		t.Fatal("expected an error when both path and command are set")
+	}
+}
+
 func TestMergeStandaloneServiceDefaultsDirectoryToProjectRoot(t *testing.T) {
 	cfg := &File{Services: map[string]ServiceConfig{
 		"web": {Command: []string{"node", "server.js"}},

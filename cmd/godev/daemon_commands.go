@@ -82,7 +82,19 @@ func cmdDaemonRun(targets []string) int {
 		fmt.Fprintln(os.Stderr, "error:", err)
 		return 1
 	}
-	sup.StartAll()
+	if len(targets) == 0 {
+		// Bare `godev --detach`: nothing named explicitly, so only
+		// what's configured to auto-start actually starts.
+		sup.StartAll()
+	} else {
+		// `godev run <target>... --detach`: naming the targets is
+		// itself the start signal, regardless of auto_start.
+		names := make([]string, len(services))
+		for i, s := range services {
+			names[i] = s.Name
+		}
+		sup.StartServices(names)
+	}
 
 	stopWatch, err := sup.WatchAndReload(200)
 	if err == nil {

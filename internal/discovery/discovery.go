@@ -10,8 +10,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-
-	"github.com/abtinokhovat/godev/internal/domain"
 )
 
 // ErrNoGoMod is returned by FindProjectRoot when no go.mod is found
@@ -133,21 +131,4 @@ func ResolveName(importPath, dir string) string {
 		return base
 	}
 	return filepath.Base(importPath)
-}
-
-// ToServices converts discovered apps into domain.Service values with
-// sensible MVP defaults (auto-start, auto-restart, hot-reload all on).
-func ToServices(apps []DiscoveredApp) []domain.Service {
-	services := make([]domain.Service, 0, len(apps))
-	for _, a := range apps {
-		services = append(services, domain.Service{
-			Name:        a.Name,
-			Package:     a.Package,
-			Directory:   a.Directory,
-			AutoStart:   true,
-			AutoRestart: true,
-			HotReload:   true,
-		})
-	}
-	return services
 }

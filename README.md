@@ -1,15 +1,25 @@
 # godev
 
-A zero-configuration development environment manager, built around Go
-projects but not limited to them. Point it at a project and it
-discovers every runnable Go `main` package, runs each as its own
-process, hot-reloads on source changes, restarts crashed services with
-backoff, and can launch headless Delve for VS Code or GoLand to attach
-to — all from a terminal UI. Non-Go services (or anything else you want
-managed alongside your Go services) come in through explicit
-configuration — a `.godev.yaml` entry or an imported JetBrains run
-configuration — rather than heuristic guessing, and can be grouped and
-run together with `godev run <group-or-service>...`.
+A development environment manager, built around Go projects but not
+limited to them. Point it at a project once (`godev init`, or just run
+`godev` and it'll prompt you) to pick which discovered Go packages and
+JetBrains run configurations become services; from then on `godev`
+only ever reads `.godev.yaml` — no scanning, no re-discovery — so it
+opens instantly regardless of project size, whether that's 3 services
+or 300. It runs each service as its own process, hot-reloads on source
+changes, restarts crashed services with backoff, and can launch
+headless Delve for VS Code or GoLand to attach to — all from a
+terminal UI. Non-Go services (or anything else you want managed
+alongside your Go services) come in through the same explicit
+selection — never heuristic guessing — and can be grouped and run
+together with `godev run <group-or-service>...`.
+
+Nothing starts on its own by default. `godev` opens the dashboard with
+every configured service sitting idle; you start what you want, either
+from the TUI (`s`) or by naming it (`godev run <target>...`), which
+starts it regardless of its `auto_start` setting. That's deliberate: a
+service you never reviewed - an imported shell script in particular -
+should never execute just because it happened to get discovered.
 
 `godev` manages development. [Delve](https://github.com/go-delve/delve)
 manages debugging (for Go services). Your IDE remains the debugger UI.
@@ -45,39 +55,49 @@ go install github.com/go-delve/delve/cmd/dlv@latest
 ## Usage
 
 Run it from anywhere inside a Go project (a directory containing, or
-under one containing, `go.mod`). Go package discovery degrades
-gracefully rather than blocking godev from starting: a package that
-fails to resolve (a broken import elsewhere in a monorepo, a
-toolchain/module-verification error, ...) is reported as a warning, not
-a fatal error, and godev still starts with whatever it *did* discover,
-plus anything from `.godev.yaml`/JetBrains import. A directory with no
-`go.mod` at all works too, as long as `.godev.yaml` or an imported
-JetBrains run configuration defines at least one service.
+under one containing, `go.mod`) - or a directory with no Go in it at
+all, as long as `.godev.yaml`/an imported JetBrains run configuration
+defines at least one service.
 
 ```sh
 godev
 ```
 
-This discovers every `main` package under the module (via `go list -json
-./...`), starts each as an independent OS process, and opens a TUI built
+The first time, with no `.godev.yaml` yet, this drops straight into an
+interactive checklist of everything discovered - every `main` package
+under the module (via `go list -json ./...`) and every recognized
+JetBrains run configuration - so you can pick exactly which ones
+become services (and rename any of them, since the config name never
+has to match the directory/package it points at) before anything is
+written. See [Getting started](#getting-started) below.
+
+From then on, `godev` just reads `.godev.yaml` and opens a TUI built
 around a terminal-native dashboard layout rather than an IDE: a narrow,
 always-visible sidebar for control and status, and a log-dominant
-content pane on the right.
+content pane on the right. It never scans or rebuilds the service list
+on its own again - re-run `godev init` whenever you want to add newly
+discovered services.
 
 ```
-┌ my-project ─────────────────────────────────── 2 service(s) · 2 running · reload ✓ ┐
-│ SERVICES              │ LOGS · all services                                        │
-│ ● api    RUNNING      │ 16:42:31 [api]    GET /users 200                           │
-│ ● worker RUNNING      │ 16:42:31 [worker] processing job 9281                      │
-│ ────────────────────  │ 16:42:32 [api]    GET /users/42 200                        │
-│ RUNTIME                │ ...                                                       │
-│ ✓ Hot reload           │                                                           │
-│ ✓ Auto restart         │                                                           │
-│ ────────────────────  │                                                           │
-│ DEBUGGER               │                                                           │
-│ ○ None                 │                                                           │
-└────────────────────────┴───────────────────────────────────────────────────────────┘
+┌ my-project ──────────────────────────────────── 3 service(s) · 1 running · reload ✓ ┐
+│ SERVICES               │ LOGS · all services                                        │
+│ ● api    RUNNING       │ 16:42:31 [api]    GET /users 200                           │
+│ ○ worker DISCOVERED    │ 16:42:31 [worker] processing job 9281                      │
+│ ○ web    DISCOVERED    │ 16:42:32 [api]    GET /users/42 200                        │
+│ ─────────────────────  │ ...                                                       │
+│ RUNTIME                │                                                           │
+│ ✓ Hot reload            │                                                          │
+│ ✓ Auto restart          │                                                          │
+│ ─────────────────────  │                                                           │
+│ DEBUGGER                │                                                          │
+│ ○ None                  │                                                          │
+└─────────────────────────┴───────────────────────────────────────────────────────────┘
 ```
+
+With more services than fit the terminal, the sidebar scrolls
+independently (`SERVICES 12-16/57`-style header) while RUNTIME/DEBUGGER
+stay pinned below it - `↑`/`↓` scrolls the window to follow the
+selection automatically.
 
 The content pane has four views, switched with `1`-`4` (or `F1`-`F4`):
 
@@ -108,17 +128,51 @@ without leaving the log-first layout.
 Editing a `.go` file anywhere in the project triggers a debounced
 rebuild-and-restart of every hot-reload-enabled service.
 
+## Getting started
+
+```sh
+godev init
+```
+
+Runs Go discovery and JetBrains import once, then an interactive
+checklist:
+
+```
+godev init · select services to add to .godev.yaml
+
+[x] api                  go       ./cmd/api
+[ ] worker               go       ./cmd/worker
+[ ] migrate               command  /bin/bash scripts/migrate.sh
+
+↑↓ move   space select   a select all/none   r rename   enter confirm and write   q cancel
+```
+
+`space` toggles a service; `r` renames it in place before it's written
+(fixes an auto-derived or collision-suffixed name like `core-2` once
+and for all, since the config key never has to match the directory it
+came from); `enter` writes the selection to `.godev.yaml` with
+`auto_start: false` on every entry - what to run automatically is a
+separate, deliberate decision, never a side effect of curating what
+*exists*. Re-running `godev init` later only ever offers what's
+genuinely new; it never touches or re-prompts for services already in
+the file.
+
+`godev` (bare) does this automatically the first time there's no
+`.godev.yaml` yet, so a brand new project still only takes one command.
+
 ### Other commands
 
 ```sh
-godev list                 # list discovered/configured services, with groups
+godev list                 # list configured services, with groups
 godev run <target>...      # open the TUI scoped to the given groups
-                            # and/or individual services
+                            # and/or individual services, starting them
+                            # regardless of their auto_start setting
 godev [run <target>...] --detach
                             # run in the background instead of opening the TUI
 godev attach                # reattach the TUI to a --detach'd instance
 godev kill                   # stop a --detach'd instance
-godev init                 # write a starter .godev.yaml
+godev init                 # interactively discover and select services
+                            # to add to .godev.yaml (see above)
 godev debug <service>      # build a debug binary, start headless Delve,
                             # print VS Code / GoLand attach instructions
 godev mcp                  # serve this project's services to an AI agent
@@ -190,25 +244,27 @@ is safe and produces no cross-talk between them.
 
 ## Configuration
 
-Configuration is entirely optional for Go services — discovery alone
-produces a working service list for conventional `cmd/<name>` layouts.
-To customize arguments, environment variables, or auto-start/restart/
-reload behavior per service, copy
-[`.godev.example.yaml`](./.godev.example.yaml) to `.godev.yaml` at your
-project root (or run `godev init`).
+`.godev.yaml` is the only thing godev ever reads to build its service
+list at runtime - see [Getting started](#getting-started) for how it
+gets written. Copy [`.godev.example.yaml`](./.godev.example.yaml) to
+`.godev.yaml` at your project root to see every field, or hand-edit
+what `godev init` wrote: change `auto_start` to `true` for a service
+you always want running on a bare `godev`, rename a key, adjust args/
+env, add a `group`.
 
-A `.godev.yaml` entry either overrides fields on a service discovery
-already found (matched by name), or, if `command` is set, defines a
-brand new **standalone service** — see below.
+An entry with `path` set is a Go service (godev builds and runs it);
+an entry with `command` set is a non-Go service godev execs directly,
+no build step. Exactly one of the two must be set - see below.
 
 ## Other services & grouping
 
 godev never heuristically guesses at non-Go projects (no scanning for
 `package.json` scripts or bare entrypoints). Instead, any service - Go
-or not - is added through one of two explicit sources:
+or not - is added through `godev init`'s interactive checklist (see
+[Getting started](#getting-started)), sourced from one of two places:
 
 **A manual `.godev.yaml` entry**, with a `command` godev execs directly
-(no build step):
+(no build step) - written by hand, not through discovery:
 
 ```yaml
 services:
@@ -220,14 +276,17 @@ services:
     group: [core]
 ```
 
-**An imported JetBrains run configuration** — if `.idea/runConfigurations/`
-exists, godev reads it (read-only; nothing is ever written back) on
-every load. `GoApplicationRunConfiguration` entries enrich a matching
-discovered Go service (by working directory) with its arguments,
-environment, and folder as `group` - they don't create a new service.
+**An imported JetBrains run configuration** — `godev init` reads
+`.idea/runConfigurations/` if it exists (read-only; nothing is ever
+written back) alongside Go discovery. `GoApplicationRunConfiguration`
+entries enrich a matching discovered Go service (by working directory)
+with its arguments, environment, and folder as `group` before it's
+even offered in the checklist - they don't add a separate item.
 `NodeJSConfigurationType`, npm, and `ShConfigurationType`
-("Shell Script") entries become standalone services the same way a
-manual `command` entry does. Other configuration types are ignored.
+("Shell Script") entries become their own selectable candidates the
+same shape as a manual `command` entry. Other configuration types are
+ignored. A run configuration with no name is skipped outright - it has
+nothing to key a service on.
 
 A service's `group` (a `.godev.yaml` field, or a JetBrains
 configuration's folder) organizes the TUI sidebar into a tree, and
@@ -249,17 +308,18 @@ Debugging (currently Delve-only) is not available for command-based
 services - `godev debug <service>` and the TUI's `d` key report a clear
 error rather than silently failing.
 
-Merge order (later wins): discovery (`go list`) → JetBrains import →
-`.godev.yaml` → one-off CLI args (for `godev <service> -- args`).
-
 ## How it works
 
-- **Discovery** (`internal/discovery`): `go list -json ./...`, filtered
-  to `Name == "main"` packages. No source parsing.
-- **JetBrains import** (`internal/discovery/jetbrains`): read-only
+- **Discovery** (`internal/discovery`) and **JetBrains import**
+  (`internal/discovery/jetbrains`) only ever run inside `godev init` -
+  never on a normal `godev`/`godev run`/etc. invocation, which reads
+  only `.godev.yaml`. `go list -json ./...`, filtered to `Name ==
+  "main"` packages, no source parsing; JetBrains import is read-only
   parsing of `.idea/runConfigurations/*.xml`, mapping known
-  configuration types to service fields and enriching or adding to the
-  discovered list. Never writes back to `.idea/`.
+  configuration types to service fields. Neither ever writes back to
+  `.idea/`; `godev init`'s interactive checklist (`cmd/godev/initmenu.go`)
+  is the only thing that writes `.godev.yaml`, always with
+  `auto_start: false`.
 - **Build** (`internal/builder`): `go build` into a per-project cache
   under `~/.cache/godev/<project-id>/<service>/`, installed via atomic
   rename so a failed build never destroys the last good binary. Debug
