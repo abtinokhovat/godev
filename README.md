@@ -164,3 +164,11 @@ godev is a process/development environment manager, not an IDE. It does
 not implement a debugger UI, DAP, breakpoint/variable/stack viewers,
 Docker/Kubernetes management, or remote development. VS Code and GoLand
 remain the debugger UI; Delve remains the debugger.
+
+## Roadmap
+
+Planned (not yet implemented) work — multi-runtime support beyond Go
+(starting with Node), a manual "add service" configuration flow,
+per-runtime debugging, service grouping, a JetBrains `.run` XML
+importer, a local daemon/API, and IDE extensions — is tracked in
+[`docs/ROADMAP.md`](./docs/ROADMAP.md).
