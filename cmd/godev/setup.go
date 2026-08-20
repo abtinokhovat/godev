@@ -24,14 +24,31 @@ func loadProject() (*project, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	// No go.mod is not fatal by itself - godev also runs manually
+	// configured (.godev.yaml) and JetBrains-imported non-Go services,
+	// so a project with only those still works; it just has nothing
+	// for Go discovery to find. Fall back to cwd as the project root
+	// in that case.
 	root, err := discovery.FindProjectRoot(cwd)
-	if err != nil {
-		return nil, fmt.Errorf("not a Go project: no go.mod found (searched upward from %s)", cwd)
+	isGoModule := err == nil
+	if !isGoModule {
+		root = cwd
 	}
 
-	apps, err := discovery.Discover(root)
-	if err != nil {
-		return nil, err
+	// A `go list` failure (a broken package elsewhere in a monorepo, a
+	// toolchain/GOSUMDB resolution error, ...) shouldn't take down
+	// discovery for the whole project - degrade to whatever Go
+	// services were found (possibly none) and let JetBrains import and
+	// .godev.yaml still contribute, per the final "nothing runnable"
+	// check below.
+	var apps []discovery.DiscoveredApp
+	if isGoModule {
+		apps, err = discovery.Discover(root)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "warning: Go package discovery failed, continuing without auto-discovered Go services: %v\n", err)
+			apps = nil
+		}
 	}
 	services := discovery.ToServices(apps)
 
@@ -50,7 +67,10 @@ func loadProject() (*project, error) {
 	}
 
 	if len(services) == 0 {
-		return nil, fmt.Errorf("no Go main packages found under %s, and no services defined in %s", root, config.FileName)
+		if isGoModule {
+			return nil, fmt.Errorf("no Go main packages found under %s, and no services defined in %s", root, config.FileName)
+		}
+		return nil, fmt.Errorf("no go.mod found under %s, and no services defined in %s", root, config.FileName)
 	}
 
 	return &project{Root: root, Services: services}, nil

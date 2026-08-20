@@ -168,6 +168,23 @@ func TestImportShellConfiguration(t *testing.T) {
 	}
 }
 
+func TestImportSkipsConfigurationsWithNoName(t *testing.T) {
+	root := t.TempDir()
+	writeRunConfig(t, root, "unnamed.xml", `<component name="ProjectRunConfigurationManager">
+  <configuration name="" type="ShConfigurationType" folderName="Tools">
+    <option name="SCRIPT_PATH" value="$PROJECT_DIR$/scripts/migrate.sh" />
+  </configuration>
+</component>`)
+
+	got, err := Import(root)
+	if err != nil {
+		t.Fatalf("Import: %v", err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("got %d configs, want 0 (a nameless configuration can't become a service): %+v", len(got), got)
+	}
+}
+
 func TestImportIgnoresUnknownConfigurationTypes(t *testing.T) {
 	root := t.TempDir()
 	writeRunConfig(t, root, "docker.xml", `<component name="ProjectRunConfigurationManager">

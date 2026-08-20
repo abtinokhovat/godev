@@ -3,13 +3,13 @@
 package discovery
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 
 	"github.com/abtinokhovat/godev/internal/domain"
 )
@@ -54,25 +54,51 @@ type DiscoveredApp struct {
 
 // Discover runs `go list -json ./...` from the project root and returns
 // every "main" package as a candidate service, per sections 6-7.
+//
+// `go list` exits non-zero as soon as any package under the tree fails
+// to resolve (a broken import in one file, a submodule/monorepo package
+// depending on something outside this module, a toolchain/GOSUMDB
+// hiccup, ...), but it still prints valid JSON for every package that
+// *did* resolve before that failure. Discarding the whole discovery
+// pass over one bad package would mean one broken corner of a large
+// monorepo prevents godev from running at all - so a non-zero exit
+// only becomes a fatal error here when it left nothing usable behind;
+// otherwise the packages that did resolve are still returned, and the
+// caller decides whether an all-or-nothing failure matters (it doesn't
+// when other services - manual or JetBrains-imported - are enough to
+// run on their own).
 func Discover(projectRoot string) ([]DiscoveredApp, error) {
 	cmd := exec.Command("go", "list", "-json", "./...")
 	cmd.Dir = projectRoot
-	out, err := cmd.Output()
-	if err != nil {
-		var exitErr *exec.ExitError
-		if errors.As(err, &exitErr) {
-			return nil, fmt.Errorf("go list failed: %w\n%s", err, string(exitErr.Stderr))
-		}
-		return nil, fmt.Errorf("go list failed: %w", err)
-	}
+	out, runErr := cmd.Output()
 
+	apps, decodeErr := decodeApps(projectRoot, out)
+	if len(apps) > 0 {
+		return apps, nil
+	}
+	if runErr != nil {
+		var exitErr *exec.ExitError
+		if errors.As(runErr, &exitErr) {
+			return nil, fmt.Errorf("go list failed: %w\n%s", runErr, string(exitErr.Stderr))
+		}
+		return nil, fmt.Errorf("go list failed: %w", runErr)
+	}
+	if decodeErr != nil {
+		return nil, fmt.Errorf("parsing go list output: %w", decodeErr)
+	}
+	return apps, nil
+}
+
+func decodeApps(projectRoot string, out []byte) ([]DiscoveredApp, error) {
 	var apps []DiscoveredApp
-	dec := json.NewDecoder(strings.NewReader(string(out)))
+	dec := json.NewDecoder(bytes.NewReader(out))
 	seen := map[string]bool{}
 	for dec.More() {
 		var pkg goListPackage
 		if err := dec.Decode(&pkg); err != nil {
-			return nil, fmt.Errorf("parsing go list output: %w", err)
+			// Whatever decoded before this point is still usable -
+			// stop rather than discarding it over one bad record.
+			return apps, fmt.Errorf("parsing go list output: %w", err)
 		}
 		if pkg.Name != "main" || len(pkg.GoFiles) == 0 {
 			continue
