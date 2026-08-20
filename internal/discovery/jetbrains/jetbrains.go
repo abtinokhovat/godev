@@ -117,6 +117,12 @@ func splitArgs(s string) []string {
 }
 
 func convert(c xmlConfigItem, projectRoot string) (RunConfig, bool) {
+	if c.Name == "" {
+		// A run configuration with no name can't become a service: it
+		// has nothing to key dedup, selection, or supervisor lookups
+		// on, and would otherwise show up as a blank, unselectable row.
+		return RunConfig{}, false
+	}
 	switch c.Type {
 	case "GoApplicationRunConfiguration":
 		return convertGo(c, projectRoot)

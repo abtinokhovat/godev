@@ -45,7 +45,14 @@ go install github.com/go-delve/delve/cmd/dlv@latest
 ## Usage
 
 Run it from anywhere inside a Go project (a directory containing, or
-under one containing, `go.mod`):
+under one containing, `go.mod`). Go package discovery degrades
+gracefully rather than blocking godev from starting: a package that
+fails to resolve (a broken import elsewhere in a monorepo, a
+toolchain/module-verification error, ...) is reported as a warning, not
+a fatal error, and godev still starts with whatever it *did* discover,
+plus anything from `.godev.yaml`/JetBrains import. A directory with no
+`go.mod` at all works too, as long as `.godev.yaml` or an imported
+JetBrains run configuration defines at least one service.
 
 ```sh
 godev
