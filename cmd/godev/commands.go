@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -47,12 +48,49 @@ func cmdRoot() int {
 		return 1
 	}
 
-	fmt.Printf("Discovered %d Go application(s) in %s:\n", len(p.Services), p.Root)
+	fmt.Printf("Discovered %d service(s) in %s:\n", len(p.Services), p.Root)
 	for _, s := range p.Services {
-		fmt.Printf("  %-16s %s\n", s.Name, s.Package)
+		fmt.Printf("  %-16s %s\n", s.Name, serviceSource(s))
 	}
 
-	sup, err := newSupervisor(p)
+	return runTUI(p, p.Services, filepath.Base(p.Root))
+}
+
+// cmdRunGroup opens the TUI scoped to a single named group, e.g.
+// `godev run core` starts and displays only the services in the "core"
+// group - it never affects services outside that group.
+func cmdRunGroup(group string) int {
+	p, err := loadProject()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "error:", err)
+		return 1
+	}
+	services := servicesInGroup(p.Services, group)
+	if len(services) == 0 {
+		fmt.Fprintf(os.Stderr, "error: no services in group %q (try `godev list`)\n", group)
+		return 1
+	}
+
+	fmt.Printf("Running group %q: %d service(s)\n", group, len(services))
+	for _, s := range services {
+		fmt.Printf("  %-16s %s\n", s.Name, serviceSource(s))
+	}
+
+	return runTUI(p, services, filepath.Base(p.Root)+" · "+group)
+}
+
+func serviceSource(s domain.Service) string {
+	if s.IsCommand() {
+		return strings.Join(s.Command, " ")
+	}
+	return s.Package
+}
+
+// runTUI builds a Supervisor scoped to exactly the given services,
+// starts them, and runs the TUI until the user quits or the process is
+// signaled, then shuts everything down gracefully.
+func runTUI(p *project, services []domain.Service, label string) int {
+	sup, err := application.NewSupervisor(p.Root, services)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
 		return 1
@@ -66,7 +104,7 @@ func cmdRoot() int {
 		defer stopWatch()
 	}
 
-	m := tui.New(sup, filepath.Base(p.Root))
+	m := tui.New(sup, label)
 	program := tea.NewProgram(m, tea.WithAltScreen())
 	if _, err := program.Run(); err != nil {
 		fmt.Fprintln(os.Stderr, "tui error:", err)
@@ -84,7 +122,14 @@ func cmdList() int {
 	}
 	fmt.Println("SERVICES")
 	for _, s := range p.Services {
-		fmt.Printf("%s\n  package: %s\n  status:  discovered\n", s.Name, s.Package)
+		kind := "package"
+		if s.IsCommand() {
+			kind = "command"
+		}
+		fmt.Printf("%s\n  %s: %s\n", s.Name, kind, serviceSource(s))
+		if len(s.Group) > 0 {
+			fmt.Printf("  group:   %s\n", strings.Join(s.Group, "/"))
+		}
 	}
 	return 0
 }
@@ -144,8 +189,14 @@ func cmdDebug(name string) int {
 		fmt.Fprintln(os.Stderr, "error:", err)
 		return 1
 	}
-	if _, ok := findService(p, name); !ok {
+	svc, ok := findService(p, name)
+	if !ok {
 		fmt.Fprintf(os.Stderr, "error: unknown service %q\n", name)
+		return 1
+	}
+	if svc.IsCommand() {
+		fmt.Fprintf(os.Stderr, "error: debugging isn't supported for command-based services (%q runs %q, not a Go build)\n",
+			name, strings.Join(svc.Command, " "))
 		return 1
 	}
 	if err := debugger.CheckInstalled(); err != nil {

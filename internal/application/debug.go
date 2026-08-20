@@ -2,6 +2,7 @@ package application
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/abtinokhovat/godev/internal/builder"
@@ -19,6 +20,13 @@ func (s *Supervisor) StartDebug(name string) error {
 	e, ok := s.entry(name)
 	if !ok {
 		return fmt.Errorf("unknown service %q", name)
+	}
+	if e.svc.IsCommand() {
+		err := fmt.Errorf("debugging isn't supported for command-based services (%q runs %q, not a Go build)",
+			name, strings.Join(e.svc.Command, " "))
+		s.events.Publish(Event{Type: EventDebuggerFailed, Service: name, Err: err})
+		s.log(name, logs.StreamSystem, err.Error())
+		return err
 	}
 	if err := debugger.CheckInstalled(); err != nil {
 		s.events.Publish(Event{Type: EventDebuggerFailed, Service: name, Err: err})
@@ -133,14 +141,15 @@ func (s *Supervisor) StopDebug(name string) error {
 }
 
 // stopLocked stops a service's normal process; caller must already hold
-// e.opLock.
+// e.opLock. Deliberately does not touch e.generation - see lifecycle.go's
+// Stop() for why bumping it here would make the process's own monitor()
+// goroutine think itself superseded and skip its Stopped transition.
 func (s *Supervisor) stopLocked(e *serviceEntry, name string) {
 	s.mu.Lock()
 	handle := e.handle
 	if e.runtime.State == domain.StateRunning {
 		e.runtime.State = domain.StateStopping
 	}
-	e.generation++ // see Stop()'s comment: invalidates any pending crash-restart
 	s.mu.Unlock()
 	if handle == nil {
 		return

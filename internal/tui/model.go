@@ -83,7 +83,7 @@ func New(sup *application.Supervisor, project string) Model {
 	eventsCh, _ := sup.Events().Subscribe(64)
 	logsCh, _ := sup.Logs().Subscribe(256)
 
-	return Model{
+	m := Model{
 		sup:         sup,
 		project:     project,
 		services:    services,
@@ -92,6 +92,14 @@ func New(sup *application.Supervisor, project string) Model {
 		eventsCh:    eventsCh,
 		logsCh:      logsCh,
 	}
+	// Ungrouped services always render first (see groupedRows), so
+	// index 0 is usually already the top row - but if service 0 happens
+	// to belong to a group, start the selection on whatever the sidebar
+	// actually shows first instead of a row that isn't visually at top.
+	if order := m.selectableOrder(); len(order) > 0 {
+		m.selected = order[0]
+	}
+	return m
 }
 
 type eventMsg application.Event
@@ -132,4 +140,86 @@ func (m Model) selectedService() (domain.Service, bool) {
 		return domain.Service{}, false
 	}
 	return m.services[m.selected], true
+}
+
+// groupRow is one row of the sidebar's grouped service tree: either a
+// non-selectable group header (Header set, ServiceIndex ignored) or a
+// selectable service row (ServiceIndex into m.services).
+type groupRow struct {
+	Header       string
+	ServiceIndex int
+	IsHeader     bool
+}
+
+// groupedRows lays out m.services for the sidebar: ungrouped services
+// first (today's flat list, unchanged for projects with no groups),
+// then each group's services under a header, groups in order of first
+// appearance (not sorted - so a project's own service order still
+// drives what the user sees, per how discovery/config naturally order
+// things).
+func (m Model) groupedRows() []groupRow {
+	var rows []groupRow
+	for i, svc := range m.services {
+		if len(svc.Group) == 0 {
+			rows = append(rows, groupRow{ServiceIndex: i})
+		}
+	}
+
+	var groupOrder []string
+	groupIndices := map[string][]int{}
+	for i, svc := range m.services {
+		if len(svc.Group) == 0 {
+			continue
+		}
+		g := svc.Group[0]
+		if _, ok := groupIndices[g]; !ok {
+			groupOrder = append(groupOrder, g)
+		}
+		groupIndices[g] = append(groupIndices[g], i)
+	}
+	for _, g := range groupOrder {
+		rows = append(rows, groupRow{Header: g, IsHeader: true})
+		for _, i := range groupIndices[g] {
+			rows = append(rows, groupRow{ServiceIndex: i})
+		}
+	}
+	return rows
+}
+
+// selectableOrder returns groupedRows' service indices only (headers
+// excluded), in sidebar order - what up/down navigation moves through.
+func (m Model) selectableOrder() []int {
+	rows := m.groupedRows()
+	order := make([]int, 0, len(rows))
+	for _, r := range rows {
+		if !r.IsHeader {
+			order = append(order, r.ServiceIndex)
+		}
+	}
+	return order
+}
+
+// adjacentSelection returns the service index delta steps away from
+// the current selection in sidebar (grouped) order, e.g. delta=1 for
+// "down", delta=-1 for "up". ok is false at either end of the list.
+func (m Model) adjacentSelection(delta int) (int, bool) {
+	order := m.selectableOrder()
+	pos := -1
+	for i, idx := range order {
+		if idx == m.selected {
+			pos = i
+			break
+		}
+	}
+	if pos == -1 {
+		if len(order) == 0 {
+			return 0, false
+		}
+		return order[0], true
+	}
+	newPos := pos + delta
+	if newPos < 0 || newPos >= len(order) {
+		return 0, false
+	}
+	return order[newPos], true
 }

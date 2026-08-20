@@ -9,18 +9,27 @@ import (
 	"os"
 )
 
-const usage = `godev - zero-config Go development environment manager
+const usage = `godev - zero-config development environment manager
 
 Usage:
   godev                        Discover services and open the TUI
+  godev run <group>            Open the TUI scoped to one named group
   godev list                   List discovered/configured services
   godev init                   Write a starter .godev.yaml
   godev debug <service>        Build a debug binary and start headless Delve
   godev <service> [-- args]    Run one service in the foreground with hot reload
   godev help                   Show this message
 
-In the TUI: up/down select, enter details, r restart, s start/stop,
-d toggle debugger, c clear logs, pgup/pgdn scroll logs, q quit.
+Services come from Go's own "go list" discovery, from an imported
+JetBrains .run configuration (.idea/runConfigurations), or from a
+standalone entry in .godev.yaml with an explicit "command" - the last
+two work for any language, not just Go. Group a service by setting
+"group" in .godev.yaml or importing it from a JetBrains run
+configuration folder.
+
+In the TUI: up/down select, enter focus a service's logs, tab expand
+detail, r restart, s start/stop, d toggle debugger, c clear logs,
+1-4 (or F1-F4) switch views, pgup/pgdn scroll, q quit.
 `
 
 func main() {
@@ -40,6 +49,12 @@ func run(args []string) int {
 		return cmdList()
 	case "init":
 		return cmdInit()
+	case "run":
+		if len(args) < 2 {
+			fmt.Fprintln(os.Stderr, "usage: godev run <group>")
+			return 1
+		}
+		return cmdRunGroup(args[1])
 	case "debug":
 		if len(args) < 2 {
 			fmt.Fprintln(os.Stderr, "usage: godev debug <service>")

@@ -2,6 +2,7 @@ package application
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/abtinokhovat/godev/internal/builder"
@@ -11,11 +12,24 @@ import (
 )
 
 // build compiles the service in normal mode, publishing build events.
-// Per section 14, a failed build leaves any previously built binary
-// untouched - the builder itself guarantees that via atomic rename.
+// A failed build leaves any previously built binary untouched - the
+// builder itself guarantees that via atomic rename.
+//
+// Command-based services (domain.Service.IsCommand(), i.e. manual
+// .godev.yaml entries or imported run configurations for non-Go
+// services) have no build step at all - godev execs their Command
+// directly - so this returns instantly with a synthetic success.
 func (s *Supervisor) build(e *serviceEntry, name string) (builder.Result, error) {
 	s.setState(e, name, domain.StateBuilding)
 	s.events.Publish(Event{Type: EventBuildStarted, Service: name, Message: "building"})
+
+	if e.svc.IsCommand() {
+		res := builder.Result{Success: true, Output: "no build step (command-based service)"}
+		s.recordBuild(e, res)
+		s.events.Publish(Event{Type: EventBuildSucceeded, Service: name})
+		return res, nil
+	}
+
 	s.log(name, logs.StreamSystem, "building...")
 
 	res, err := s.builder.Build(e.svc, builder.ModeNormal)
@@ -62,17 +76,27 @@ func (s *Supervisor) Start(name string) error {
 		return err
 	}
 
-	return s.startBinary(e, name, res.BinaryPath)
+	return s.startProcess(e, name, runCommand(e.svc, res))
 }
 
-func (s *Supervisor) startBinary(e *serviceEntry, name, binaryPath string) error {
+// runCommand resolves what to actually exec for a service: its
+// explicit Command for command-based (non-Go) services, or the
+// freshly-built binary for Go services.
+func runCommand(svc domain.Service, res builder.Result) []string {
+	if svc.IsCommand() {
+		return svc.Command
+	}
+	return []string{res.BinaryPath}
+}
+
+func (s *Supervisor) startProcess(e *serviceEntry, name string, command []string) error {
 	s.setState(e, name, domain.StateStarting)
 	s.events.Publish(Event{Type: EventServiceStarting, Service: name})
 
 	out := make(chan process.OutputLine, 256)
 	handle, err := process.Start(process.StartOptions{
-		Binary: binaryPath,
-		Args:   e.svc.Args,
+		Binary: command[0],
+		Args:   append(append([]string{}, command[1:]...), e.svc.Args...),
 		Dir:    e.svc.Directory,
 		Env:    process.BuildEnv(e.svc.Env),
 		Output: out,
@@ -92,7 +116,7 @@ func (s *Supervisor) startBinary(e *serviceEntry, name, binaryPath string) error
 	gen := e.generation
 	e.runtime.State = domain.StateRunning
 	e.runtime.PID = handle.PID
-	e.runtime.BinaryPath = binaryPath
+	e.runtime.BinaryPath = strings.Join(command, " ")
 	e.runtime.StartedAt = time.Now()
 	e.runtime.LastError = ""
 	s.mu.Unlock()
@@ -154,13 +178,20 @@ func (s *Supervisor) monitor(e *serviceEntry, name string, handle *process.Handl
 	s.log(name, logs.StreamSystem, "crashed: "+exitMsg)
 
 	if e.svc.AutoRestart {
-		go s.crashRestart(e, name, gen)
+		go s.crashRestart(e, name)
 	}
 }
 
 // crashRestart applies exponential backoff (section 25) before
-// rebuilding and restarting a crashed service.
-func (s *Supervisor) crashRestart(e *serviceEntry, name string, gen int) {
+// rebuilding and restarting a crashed service. It re-checks the
+// service's state after waking from its backoff sleep (under opLock,
+// so nothing else can be mid-transition) rather than relying on the
+// generation counter: opLock serialization guarantees state can only
+// have moved away from Crashed if something else - a user-initiated
+// Stop(), or another Start()/Restart() that raced ahead while this
+// goroutine slept - already handled it, in which case this restart is
+// no longer wanted and must not revive the service.
+func (s *Supervisor) crashRestart(e *serviceEntry, name string) {
 	delay := e.backoff.next()
 
 	s.events.Publish(Event{Type: EventServiceRestarting, Service: name,
@@ -172,9 +203,9 @@ func (s *Supervisor) crashRestart(e *serviceEntry, name string, gen int) {
 	defer e.opLock.Unlock()
 
 	s.mu.RLock()
-	supersededOrStopped := e.generation != gen
+	stillCrashed := e.runtime.State == domain.StateCrashed
 	s.mu.RUnlock()
-	if supersededOrStopped {
+	if !stillCrashed {
 		return
 	}
 
@@ -183,7 +214,7 @@ func (s *Supervisor) crashRestart(e *serviceEntry, name string, gen int) {
 	if err != nil {
 		return
 	}
-	_ = s.startBinary(e, name, res.BinaryPath)
+	_ = s.startProcess(e, name, runCommand(e.svc, res))
 
 	// Reset backoff once the service has stayed up long enough (section 25).
 	go e.backoff.watchStability(func() bool {
@@ -203,22 +234,27 @@ func (s *Supervisor) Stop(name string) error {
 
 	s.mu.Lock()
 	handle := e.handle
-	running := e.runtime.State == domain.StateRunning || e.runtime.State == domain.StateCrashed
-	if e.runtime.State == domain.StateRunning {
+	live := e.runtime.State == domain.StateRunning
+	if live {
+		// A real process is running: mark it Stopping and let monitor()
+		// (racing on the same handle) make the final Stopped transition
+		// once handle.Stop() below actually kills it - don't preempt that
+		// here, and don't touch e.generation, which would make monitor()
+		// think a newer start superseded it and skip the transition
+		// entirely, leaving the service stuck at Stopping forever.
 		e.runtime.State = domain.StateStopping
+	} else if e.runtime.State != domain.StateStopped {
+		// No live process to signal (crashed, build-failed, never
+		// started, etc). This also opLock-serializes against
+		// crashRestart(), which re-checks state == Crashed after its
+		// backoff sleep - setting Stopped here is what makes a
+		// crash-restart that's currently sleeping abort instead of
+		// reviving a service the caller just stopped.
+		e.runtime.State = domain.StateStopped
 	}
-	// Bump the generation so any crash-restart backoff still sleeping for
-	// this service (tied to the old generation) sees itself as superseded
-	// and aborts instead of reviving a service the caller just stopped.
-	e.generation++
 	s.mu.Unlock()
 
-	if handle == nil || !running {
-		s.mu.Lock()
-		if e.runtime.State != domain.StateStopped {
-			e.runtime.State = domain.StateStopped
-		}
-		s.mu.Unlock()
+	if !live {
 		return nil
 	}
 

@@ -1,98 +1,78 @@
 # Roadmap: Grouping, Run Configurations, MCP, IDE Extensions
 
-This is a planning document for future work — nothing here is
-implemented yet. It exists so the design decisions and phasing are
-written down before implementation starts, rather than re-derived from
-scratch later. Phases are ordered by priority, as directed by the
-project owner; earlier phases are wanted sooner, not necessarily
-"blocking" in a strict dependency sense unless noted.
+Phases are ordered by priority, as directed by the project owner.
+Phases 0-1 are implemented; the rest are still planning documents for
+future work.
 
 ## Why
 
-godev today discovers and runs only Go programs: discovery shells
-`go list -json`, the build step shells `go build`, the debugger shells
-`dlv`. The near-term goal is **not** to make godev natively understand
-every language — auto-discovery stays Go-only, and no other language
-gets bespoke build/debug integration right now. Instead, the goal is
-to let *any* run configuration be added explicitly — from
-`.godev.yaml` directly, or imported from JetBrains' own `.run` XML
-files (which already capture Go, Node/JS, npm, and shell run configs a
-developer set up in their IDE) — and to organize the resulting service
-list into groups. On top of that, expose godev to AI agents via MCP so
-an agent can run and debug services the same way a developer would
-through the TUI. IDE extensions (JetBrains, VS Code, Zed) remain the
-lowest priority — useful eventually, not urgent.
+godev discovers and runs Go programs via `go list`, `go build`, and
+`dlv`. Rather than trying to make godev natively understand every
+language, non-Go services (or anything else you want managed alongside
+your Go services) are added through **explicit configuration** - a
+`.godev.yaml` entry or an imported JetBrains run configuration - not
+heuristic scanning. Services can be grouped and run together. On top of
+that, the plan is to expose godev to AI agents via MCP, and eventually
+ship IDE extensions (JetBrains first, then VS Code, then Zed) - the
+lowest priority, useful eventually, not urgent.
 
-## Phase 0 — Minimal data-model groundwork
+## Phase 0/1 — Run configurations + grouping (implemented)
 
-Small, foundational changes that Phase 1 needs; not a large refactor.
+- **`domain.Service.Command []string`**: a service either has a `Package`
+  (Go, compiled by `internal/builder`) or a `Command` (execed directly,
+  no build step - `Service.IsCommand()`). `internal/application`'s
+  `build()` treats a command-based service's build as an instant
+  synthetic success and runs `Command` (plus `Args`) directly; debugging
+  such a service is explicitly rejected with a clear error (Delve
+  remains Go-only).
+- **`.godev.yaml` standalone entries**: `config.Merge` now does two
+  things - overrides fields on a discovered service by name (as
+  before), and, for any config entry with a `command` that *doesn't*
+  match a discovered service, builds a brand new standalone service
+  from it (`internal/config/config.go`'s `newStandaloneService`).
+- **JetBrains `.run` XML importer** (`internal/discovery/jetbrains`):
+  read-only parsing of `.idea/runConfigurations/*.xml`. Recognizes
+  `GoApplicationRunConfiguration` (enriches a matching discovered Go
+  service, keyed by working directory, with args/env/group - doesn't
+  create a new service), `NodeJSConfigurationType`, `js.build_tools.npm`,
+  and `ShConfigurationType` (each becomes a standalone command-based
+  service). Other types are ignored. Wired into `cmd/godev/setup.go`'s
+  `applyJetBrainsImport`, between discovery and `.godev.yaml` merging.
+- **`Service.Group []string`**: set via `.godev.yaml`'s `group:` field
+  or a JetBrains configuration's `folderName`. The TUI sidebar
+  (`internal/tui/sidebar.go`, `model.go`) renders ungrouped services
+  first (unchanged for projects with no groups), then each group under
+  a header, in first-seen order - not sorted, not collapsible (that's
+  a possible later refinement, not required for grouping to be useful).
+- **`godev run <group>`**: opens the TUI scoped to one named group
+  (`cmd/godev/commands.go`'s `cmdRunGroup`, filtering via
+  `servicesInGroup`). `godev` (bare) is unchanged. A group can mix Go
+  and command-based services freely - hot reload still means "watch →
+  rebuild → restart" for a Go service and "watch → restart" for a
+  command-based one, since the latter's build step is already a no-op.
 
-- `domain.Service` gains `Group []string` (hierarchical path, empty =
-  ungrouped) and a way to represent a service that came from manual
-  config or an imported run configuration rather than `go list`
-  discovery — i.e. a standalone entry needs at minimum a command,
-  directory, and optional args/env, without requiring a discovered Go
-  package backing it.
-- `.godev.yaml` merging (`config.Merge`) currently can only override
-  services discovery already found by name — it can't add new ones.
-  Extend it so a `services.<name>` entry with no discovered
-  counterpart is treated as a standalone service definition.
-- Go's existing `go list`-based auto-discovery is unchanged and stays
-  the only auto-discovery mechanism — no heuristic scanning is added
-  for any other language.
-
-## Phase 1 — Run configurations + grouping (top priority)
-
-The two features the project owner wants first, and they're naturally
-coupled (JetBrains run configs carry both the run details *and* the
-grouping folder in one file), so they ship together:
-
-- **Manual run configurations via `.godev.yaml`**: a `services.<name>`
-  entry can fully define a service — command, directory, args, env,
-  group — independent of anything godev auto-discovered. This is the
-  general mechanism for "other project runs" of any kind (JS, Python,
-  shell scripts, anything): no per-language build/debug integration is
-  required to add one, just an explicit command to run.
-- **JetBrains `.run` XML importer**: parses
-  `.idea/runConfigurations/*.xml`, read-only (never writes back —
-  avoids corrupting JetBrains' own state or fighting a second writer).
-  Maps the run-configuration types actually in scope —
-  `GoApplicationRunConfiguration`, Node.js/npm configurations, and
-  shell-script configurations — to a service definition (working
-  directory, program args, env vars) and to `Group` via the
-  configuration's `folderName`. Other configuration types are ignored
-  rather than guessed at.
-- Merge order: `.godev.yaml` overrides everything, then the JetBrains
-  import, then Go's `go list` discovery — keyed by directory (not
-  name, since XML run-config names are freeform) so the same service
-  doesn't get double-listed if it appears in more than one source.
-- **Sidebar grouping**: the TUI's service list — currently one flat
-  loop — becomes a tree render: services grouped by `Group` prefix
-  under collapsible group headers, reusing the existing section
-  styling. Ungrouped services keep today's flat list unchanged.
-- **`godev run <group>` CLI command**: opens the TUI scoped to a
-  single named group instead of every discovered/configured service —
-  e.g. `godev run core` starts and displays only the services in the
-  `core` group. `godev` (bare, no argument) keeps today's behavior of
-  running everything. A group can mix Go and non-Go services; each
-  service's own runtime still determines its behavior within that
-  group — a Go service in the group still gets the full hot-reload
-  pipeline (watch → rebuild → restart), while a non-Go service in the
-  same group gets hot reload without a compile step (watch → restart
-  directly), since only Go has a build step to run. This isn't new
-  machinery: the existing hot-reload path already restarts a service
-  after its build step completes, and a no-op build (Phase 0's generic
-  runtime) already completes instantly — the group command just needs
-  to filter which services are in play, not change how any individual
-  service reloads.
-- **Explicitly not in scope for this phase**: bespoke build or debug
-  integration for JS/Node or any other language. A JS service added
-  through `.godev.yaml` or imported from a JetBrains Node run
-  configuration gets process management (start/stop/restart/hot
-  reload/logs) exactly like any Go service, but no specialized
-  debugger — Delve remains Go-only for now. If a later need arises for
-  first-class Node (or other language) debugging, that's a separate,
-  deliberately deferred phase, not part of this one.
+**Deviations from the original sketch**, made deliberately while
+implementing rather than over-building ahead of need:
+- No formal `Discoverer` interface. `go list` discovery and the
+  JetBrains importer are separate, purpose-built functions called
+  directly from `setup.go` - there's no current need for polymorphism
+  with only two sources, and introducing one prematurely would be
+  speculative abstraction. Worth reconsidering if a third source shows
+  up (a real Discoverer interface would also be the natural seam for
+  it).
+- Group headers aren't collapsible - always-expanded sections. Simpler,
+  and grouping is useful without it; collapsibility is a nice-to-have,
+  not blocking.
+- The `Watch.Include`/`Exclude` dead-field bug (parsed from
+  `.godev.yaml` but never read by the watcher) is **not** fixed by this
+  phase - it was originally scoped in alongside multi-runtime watcher
+  defaults, but hot reload for command-based services turned out not to
+  need it: the project-wide watcher only ever restarts services in
+  response to `.go`/`go.mod`/`go.sum` changes, so a command-based
+  service only reloads today if something else in the project (a Go
+  file) changes while it has `hot_reload: true` set - imprecise, but
+  consistent with the existing (documented) "no per-service dependency
+  graph" limitation for Go services, not a new gap. Still tracked below.
 
 ## Phase 2 — MCP server for AI agents
 
@@ -145,7 +125,7 @@ fresh, standalone, in-process instance.
 
 JetBrains first, then VS Code, then Zed — order confirmed by the
 project owner. Hard-blocked on Phase 3 (needs a stable daemon API to
-talk to); benefits from Phase 1's grouping data.
+talk to); benefits from Phase 0/1's grouping data.
 
 1. **JetBrains plugin** — tool window listing services/groups sourced
    from the daemon, start/stop/restart/debug actions, one-click attach
@@ -162,12 +142,12 @@ talk to); benefits from Phase 1's grouping data.
 
 ## Also folding in: smaller gaps from the original implementation plan
 
-Bundled into the phases above where the same files are already being
-touched, rather than tracked as their own phase:
+Still open, bundled here rather than tracked as their own phase:
 
-- `Service.Watch.Include`/`Exclude` is parsed from `.godev.yaml` but
-  never actually read by the watcher (hardcoded to `.go`/`go.mod`/
-  `go.sum`) — dead field, fix as part of Phase 0/1's config work.
+- `Service.Watch.Include`/`Exclude` dead-field wiring (see Phase 0/1's
+  deviations note above for why this wasn't needed yet, and what it
+  would take: a per-service watch predicate instead of the current
+  hardcoded project-wide `.go`/`go.mod`/`go.sum` filter).
 - Debounce window is hardcoded (200ms) — make it a `.godev.yaml`
   `watch.debounce_ms` setting.
 - Per-package dependency-graph-scoped rebuilds — today *any* file

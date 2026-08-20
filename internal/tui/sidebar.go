@@ -21,14 +21,24 @@ func (m Model) renderSidebar() []string {
 	var lines []string
 
 	lines = append(lines, styleSection.Render("SERVICES"), "")
-	for i, svc := range m.services {
-		rt := m.runtimes[svc.Name]
-		selected := i == m.selected
+	for _, row := range m.groupedRows() {
+		if row.IsHeader {
+			lines = append(lines, "", styleGroupHeader.Render(truncate(row.Header, w)))
+			continue
+		}
 
-		nameLine := fmt.Sprintf("%s %-*s", stateDot(rt.State), w-3, truncate(svc.Name, w-4))
-		statusLine := "  " + rt.State.String()
+		svc := m.services[row.ServiceIndex]
+		rt := m.runtimes[svc.Name]
+		selected := row.ServiceIndex == m.selected
+		indent := ""
+		if len(svc.Group) > 0 {
+			indent = " "
+		}
+
+		nameLine := fmt.Sprintf("%s%s %-*s", indent, stateDot(rt.State), w-3-len(indent), truncate(svc.Name, w-4-len(indent)))
+		statusLine := indent + "  " + rt.State.String()
 		if rt.PID != 0 {
-			statusLine = fmt.Sprintf("  %s · PID %d", rt.State.String(), rt.PID)
+			statusLine = fmt.Sprintf("%s  %s · PID %d", indent, rt.State.String(), rt.PID)
 		}
 		statusLine = truncate(statusLine, w)
 
@@ -37,7 +47,7 @@ func (m Model) renderSidebar() []string {
 			lines = append(lines, styleSelected.Render(padRight(statusLine, w)))
 		} else {
 			dot := lipgloss.NewStyle().Foreground(stateColor(rt.State)).Render(stateDot(rt.State))
-			lines = append(lines, dot+" "+truncate(svc.Name, w-4))
+			lines = append(lines, indent+dot+" "+truncate(svc.Name, w-4-len(indent)))
 			lines = append(lines, styleDim.Render(statusLine))
 		}
 	}
@@ -108,7 +118,14 @@ func (m Model) renderDetail(svc domain.Service, w int) []string {
 
 	var lines []string
 	lines = append(lines, styleSection.Render("DETAIL: "+truncate(svc.Name, w-8)))
-	lines = append(lines, styleLabel.Render("Package  ")+truncate(svc.Package, w-9))
+	if svc.IsCommand() {
+		lines = append(lines, styleLabel.Render("Command  ")+truncate(strings.Join(svc.Command, " "), w-9))
+	} else {
+		lines = append(lines, styleLabel.Render("Package  ")+truncate(svc.Package, w-9))
+	}
+	if len(svc.Group) > 0 {
+		lines = append(lines, styleLabel.Render("Group    ")+truncate(strings.Join(svc.Group, "/"), w-9))
+	}
 	lines = append(lines, styleLabel.Render("Uptime   ")+uptime(rt))
 	buildFlag := styleDim.Render("--")
 	if bi.Attempted {
