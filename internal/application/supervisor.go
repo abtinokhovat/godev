@@ -1,0 +1,146 @@
+// Package application is the core: the Supervisor drives each service's
+// lifecycle (build, start, stop, restart, debug, crash/restart-on-change)
+// and publishes Events + log lines for the TUI/CLI to consume. Per
+// section 29, it is "the heart of the application"; the TUI never
+// touches processes directly.
+package application
+
+import (
+	"fmt"
+	"sync"
+	"time"
+
+	"github.com/abtinokhovat/godev/internal/builder"
+	"github.com/abtinokhovat/godev/internal/debugger"
+	"github.com/abtinokhovat/godev/internal/domain"
+	"github.com/abtinokhovat/godev/internal/logs"
+	"github.com/abtinokhovat/godev/internal/process"
+)
+
+const stopTimeout = 5 * time.Second
+
+// serviceEntry bundles a service's config, runtime snapshot, and the
+// per-service lock that serializes its lifecycle operations (section 30).
+type serviceEntry struct {
+	svc     domain.Service
+	runtime domain.ServiceRuntime
+	opLock  sync.Mutex // serializes build/start/stop/restart for this service
+
+	handle  *process.Handle
+	debug   *debugger.Session
+	backoff *backoffState
+
+	// generation guards against a stale monitor goroutine acting on a
+	// service after it has already moved on (e.g. stopped then restarted).
+	generation int
+}
+
+type Supervisor struct {
+	ProjectRoot string
+
+	mu      sync.RWMutex
+	entries map[string]*serviceEntry
+	order   []string
+
+	builder *builder.Builder
+	logsMgr *logs.Manager
+	events  *EventBus
+}
+
+func NewSupervisor(projectRoot string, services []domain.Service) (*Supervisor, error) {
+	b, err := builder.New(projectRoot)
+	if err != nil {
+		return nil, fmt.Errorf("initializing builder: %w", err)
+	}
+	s := &Supervisor{
+		ProjectRoot: projectRoot,
+		entries:     make(map[string]*serviceEntry, len(services)),
+		builder:     b,
+		logsMgr:     logs.NewManager(5000),
+		events:      NewEventBus(),
+	}
+	for _, svc := range services {
+		s.entries[svc.Name] = &serviceEntry{
+			svc:     svc,
+			runtime: domain.ServiceRuntime{State: domain.StateDiscovered},
+			backoff: newBackoff(),
+		}
+		s.order = append(s.order, svc.Name)
+		s.events.Publish(Event{Type: EventServiceDiscovered, Service: svc.Name,
+			Message: fmt.Sprintf("discovered %s (%s)", svc.Name, svc.Package)})
+	}
+	return s, nil
+}
+
+func (s *Supervisor) Logs() *logs.Manager { return s.logsMgr }
+func (s *Supervisor) Events() *EventBus   { return s.events }
+
+// Services returns the static config for every known service, in
+// discovery order.
+func (s *Supervisor) Services() []domain.Service {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	out := make([]domain.Service, 0, len(s.order))
+	for _, name := range s.order {
+		out = append(out, s.entries[name].svc)
+	}
+	return out
+}
+
+// Runtime returns a snapshot of a service's current runtime state.
+func (s *Supervisor) Runtime(name string) (domain.ServiceRuntime, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	e, ok := s.entries[name]
+	if !ok {
+		return domain.ServiceRuntime{}, false
+	}
+	return e.runtime, true
+}
+
+func (s *Supervisor) entry(name string) (*serviceEntry, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	e, ok := s.entries[name]
+	return e, ok
+}
+
+func (s *Supervisor) setState(e *serviceEntry, name string, state domain.State) {
+	s.mu.Lock()
+	e.runtime.State = state
+	s.mu.Unlock()
+}
+
+func (s *Supervisor) log(name string, stream logs.Stream, msg string) {
+	s.logsMgr.Publish(logs.Event{Service: name, Stream: stream, Message: msg})
+}
+
+// StartAll starts every service configured with AutoStart, per the
+// "discover 3 services -> present them running" flow in section 8.
+func (s *Supervisor) StartAll() {
+	for _, name := range s.order {
+		e, _ := s.entry(name)
+		if e.svc.AutoStart {
+			go func(n string) {
+				if err := s.Start(n); err != nil {
+					s.log(n, logs.StreamSystem, "start failed: "+err.Error())
+				}
+			}(name)
+		}
+	}
+}
+
+// Shutdown stops every running service and debugger, per section 50's
+// graceful-shutdown sequence.
+func (s *Supervisor) Shutdown() {
+	var wg sync.WaitGroup
+	for _, name := range s.order {
+		wg.Add(1)
+		go func(n string) {
+			defer wg.Done()
+			_ = s.StopDebug(n)
+			_ = s.Stop(n)
+		}(name)
+	}
+	wg.Wait()
+}

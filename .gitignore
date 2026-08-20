@@ -1,0 +1,4 @@
+/godev
+/dist/
+*.test
+*.out
