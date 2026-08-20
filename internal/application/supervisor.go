@@ -26,13 +26,25 @@ type serviceEntry struct {
 	runtime domain.ServiceRuntime
 	opLock  sync.Mutex // serializes build/start/stop/restart for this service
 
-	handle  *process.Handle
-	debug   *debugger.Session
-	backoff *backoffState
+	handle    *process.Handle
+	debug     *debugger.Session
+	backoff   *backoffState
+	lastBuild BuildInfo
 
 	// generation guards against a stale monitor goroutine acting on a
 	// service after it has already moved on (e.g. stopped then restarted).
 	generation int
+}
+
+// BuildInfo is the outcome of the most recent build attempt for a
+// service, kept around so the TUI's Build view has something to show
+// even between builds (and so a successful build after a failure still
+// has the old failing output available for a moment).
+type BuildInfo struct {
+	Output    string
+	Success   bool
+	Attempted bool
+	At        time.Time
 }
 
 type Supervisor struct {
@@ -45,6 +57,8 @@ type Supervisor struct {
 	builder *builder.Builder
 	logsMgr *logs.Manager
 	events  *EventBus
+
+	watchActive bool
 }
 
 func NewSupervisor(projectRoot string, services []domain.Service) (*Supervisor, error) {
@@ -96,6 +110,39 @@ func (s *Supervisor) Runtime(name string) (domain.ServiceRuntime, bool) {
 		return domain.ServiceRuntime{}, false
 	}
 	return e.runtime, true
+}
+
+// BuildInfo returns the outcome of a service's most recent build
+// attempt, for the TUI's Build view.
+func (s *Supervisor) BuildInfo(name string) (BuildInfo, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	e, ok := s.entries[name]
+	if !ok {
+		return BuildInfo{}, false
+	}
+	return e.lastBuild, true
+}
+
+func (s *Supervisor) recordBuild(e *serviceEntry, res builder.Result) {
+	s.mu.Lock()
+	e.lastBuild = BuildInfo{Output: res.Output, Success: res.Success, Attempted: true, At: time.Now()}
+	s.mu.Unlock()
+}
+
+// SetWatchActive records whether the project-wide hot-reload watcher is
+// currently running, for the TUI's sidebar/header status.
+func (s *Supervisor) SetWatchActive(active bool) {
+	s.mu.Lock()
+	s.watchActive = active
+	s.mu.Unlock()
+}
+
+// WatchActive reports whether hot reload is currently active.
+func (s *Supervisor) WatchActive() bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.watchActive
 }
 
 func (s *Supervisor) entry(name string) (*serviceEntry, bool) {

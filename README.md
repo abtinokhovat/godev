@@ -31,12 +31,51 @@ godev
 ```
 
 This discovers every `main` package under the module (via `go list -json
-./...`), starts each as an independent OS process, and opens a TUI:
+./...`), starts each as an independent OS process, and opens a TUI built
+around a terminal-native dashboard layout rather than an IDE: a narrow,
+always-visible sidebar for control and status, and a log-dominant
+content pane on the right.
 
 ```
-↑↓ select   enter details   r restart   s start/stop   d debug
-c clear logs   pgup/pgdn scroll   q quit
+┌ my-project ─────────────────────────────────── 2 service(s) · 2 running · reload ✓ ┐
+│ SERVICES              │ LOGS · all services                                        │
+│ ● api    RUNNING      │ 16:42:31 [api]    GET /users 200                           │
+│ ● worker RUNNING      │ 16:42:31 [worker] processing job 9281                      │
+│ ────────────────────  │ 16:42:32 [api]    GET /users/42 200                        │
+│ RUNTIME                │ ...                                                       │
+│ ✓ Hot reload           │                                                           │
+│ ✓ Auto restart         │                                                           │
+│ ────────────────────  │                                                           │
+│ DEBUGGER               │                                                           │
+│ ○ None                 │                                                           │
+└────────────────────────┴───────────────────────────────────────────────────────────┘
 ```
+
+The content pane has four views, switched with `1`-`4` (or `F1`-`F4`):
+
+1. **Logs** (default) — unified, service-prefixed, timestamped log
+   stream. Press `enter` on a selected service to scope the log view to
+   just that service, `a` to go back to all services.
+2. **Build** — the selected service's last build output. Shown
+   automatically whenever the selected service starts building, and
+   automatically returns to whatever view was active once the build
+   settles.
+3. **Problems** — every service currently crashed or build-failed,
+   with its error output. Empty when everything is healthy.
+4. **Debug** — the selected service's Delve session: PID, endpoint,
+   and VS Code / GoLand attach instructions, or a prompt to start one.
+
+Keys:
+
+```
+↑↓ select      enter focus service logs   a all logs        tab expand detail
+r restart      s start/stop               d start/stop debug  c clear logs
+1-4 views      pgup/pgdn scroll           q quit
+```
+
+`tab` temporarily widens the sidebar to show extra detail (package,
+uptime, build status, arguments, environment) for the selected service,
+without leaving the log-first layout.
 
 Editing a `.go` file anywhere in the project triggers a debounced
 rebuild-and-restart of every hot-reload-enabled service.

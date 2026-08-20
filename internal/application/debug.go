@@ -16,12 +16,14 @@ import (
 // Only one of {normal process, debug session} owns the binary at a time
 // (section 40): starting debug always stops the normal run first.
 func (s *Supervisor) StartDebug(name string) error {
-	if err := debugger.CheckInstalled(); err != nil {
-		return err
-	}
 	e, ok := s.entry(name)
 	if !ok {
 		return fmt.Errorf("unknown service %q", name)
+	}
+	if err := debugger.CheckInstalled(); err != nil {
+		s.events.Publish(Event{Type: EventDebuggerFailed, Service: name, Err: err})
+		s.log(name, logs.StreamSystem, err.Error())
+		return err
 	}
 	e.opLock.Lock()
 	defer e.opLock.Unlock()
@@ -41,9 +43,11 @@ func (s *Supervisor) StartDebug(name string) error {
 	s.setState(e, name, domain.StateBuilding)
 	res, err := s.builder.Build(e.svc, builder.ModeDebug)
 	if err != nil {
+		s.recordBuild(e, builder.Result{Success: false, Output: err.Error()})
 		s.events.Publish(Event{Type: EventDebuggerFailed, Service: name, Err: err})
 		return err
 	}
+	s.recordBuild(e, res)
 	if !res.Success {
 		s.mu.Lock()
 		e.runtime.State = domain.StateBuildFailed

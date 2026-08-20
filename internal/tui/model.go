@@ -1,7 +1,8 @@
-// Package tui implements godev's terminal UI (section 41-43). It only
-// ever calls into application.Supervisor's public methods - it never
-// touches processes, builds, or Delve directly (see plan section 3's
-// "TUI must never directly manage processes" rule).
+// Package tui implements godev's terminal UI: a narrow, always-visible
+// sidebar for service control/status plus a log-dominant content area
+// that switches between four views (Logs, Build, Problems, Debug). It
+// only ever calls into application.Supervisor's public methods - it
+// never touches processes, builds, or Delve directly.
 package tui
 
 import (
@@ -14,9 +15,23 @@ import (
 	"github.com/abtinokhovat/godev/internal/logs"
 )
 
+// ViewMode selects what the content pane (right of the sidebar) shows.
+// The sidebar itself never changes shape with this - it's always
+// services + runtime + debugger status, per the "left = control and
+// state, right = what is happening" split.
+type ViewMode int
+
+const (
+	ViewLogs ViewMode = iota
+	ViewBuild
+	ViewProblems
+	ViewDebugger
+)
+
 type logLine struct {
 	service string
 	stream  logs.Stream
+	time    time.Time
 	text    string
 }
 
@@ -29,11 +44,22 @@ type Model struct {
 	runtimes map[string]domain.ServiceRuntime
 
 	selected int
-	detail   bool
+	view     ViewMode
+	logScope string // "" = all services; otherwise a service name
+	expanded bool   // Tab: sidebar shows an extra detail section for the selection
+	scroll   int    // lines scrolled up from the bottom of the content pane; 0 = follow tail
 
 	logLines    []logLine
 	maxLogLines int
-	logScroll   int // 0 = follow tail; >0 = lines scrolled up from bottom
+
+	// autoBuildView remembers that we switched to the Build view
+	// automatically (because the selected service started building) so
+	// we know to switch back once the build settles, per the "shown
+	// automatically during build ... then automatically return to the
+	// logs" behavior.
+	autoBuildView  bool
+	autoReturnView ViewMode
+	returnAt       time.Time
 
 	width, height int
 	status        string
@@ -71,6 +97,7 @@ func New(sup *application.Supervisor, project string) Model {
 type eventMsg application.Event
 type logMsg logs.Event
 type tickMsg time.Time
+type returnFromBuildMsg struct{}
 
 func listenEvents(ch <-chan application.Event) tea.Cmd {
 	return func() tea.Msg {
