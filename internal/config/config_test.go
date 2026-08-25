@@ -1,6 +1,8 @@
 package config
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/abtinokhovat/godev/internal/domain"
@@ -209,5 +211,80 @@ func TestMergeStandaloneServiceDefaultsDirectoryToProjectRoot(t *testing.T) {
 	}
 	if got[0].Directory != "/proj" {
 		t.Errorf("Directory = %q, want /proj", got[0].Directory)
+	}
+}
+
+// TestLoadPreservesDeclarationOrder guards against the actual bug this
+// was written to fix: yaml.v3 decoding "services" straight into a Go
+// map loses all track of how the file was written, and Go map
+// iteration order is deliberately randomized - so without
+// File.UnmarshalYAML's explicit node walk, this order would be
+// different (at random) on every single run instead of matching the
+// file.
+func TestLoadPreservesDeclarationOrder(t *testing.T) {
+	root := t.TempDir()
+	yaml := `
+services:
+  zebra:
+    command: ["echo", "zebra"]
+  apple:
+    command: ["echo", "apple"]
+  mango:
+    command: ["echo", "mango"]
+  banana:
+    command: ["echo", "banana"]
+`
+	if err := os.WriteFile(filepath.Join(root, FileName), []byte(yaml), 0o644); err != nil {
+		t.Fatalf("writing %s: %v", FileName, err)
+	}
+
+	cfg, err := Load(root)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	wantOrder := []string{"zebra", "apple", "mango", "banana"}
+	if len(cfg.Order) != len(wantOrder) {
+		t.Fatalf("cfg.Order = %v, want %v", cfg.Order, wantOrder)
+	}
+	for i, name := range wantOrder {
+		if cfg.Order[i] != name {
+			t.Errorf("cfg.Order[%d] = %q, want %q (full: %v)", i, cfg.Order[i], name, cfg.Order)
+		}
+	}
+
+	got, err := Merge(root, nil, cfg)
+	if err != nil {
+		t.Fatalf("Merge: %v", err)
+	}
+	if len(got) != len(wantOrder) {
+		t.Fatalf("got %d services, want %d", len(got), len(wantOrder))
+	}
+	for i, name := range wantOrder {
+		if got[i].Name != name {
+			t.Errorf("got[%d].Name = %q, want %q (declaration order, not map order)", i, got[i].Name, name)
+		}
+	}
+}
+
+func TestServiceOrderFallsBackToSortedWhenOrderUnset(t *testing.T) {
+	// A File built directly (as every other test in this file does),
+	// not through Load, has no Order - Merge must still be
+	// deterministic (sorted), never raw map iteration order.
+	cfg := &File{Services: map[string]ServiceConfig{
+		"zebra": {Command: []string{"echo", "z"}},
+		"apple": {Command: []string{"echo", "a"}},
+		"mango": {Command: []string{"echo", "m"}},
+	}}
+	want := []string{"apple", "mango", "zebra"}
+	for i := 0; i < 5; i++ {
+		got, err := Merge("/proj", nil, cfg)
+		if err != nil {
+			t.Fatalf("Merge: %v", err)
+		}
+		for j, name := range want {
+			if got[j].Name != name {
+				t.Fatalf("iteration %d: got[%d].Name = %q, want %q", i, j, got[j].Name, name)
+			}
+		}
 	}
 }

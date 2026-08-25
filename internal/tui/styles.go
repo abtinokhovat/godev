@@ -31,7 +31,6 @@ var (
 	styleWarn        = lipgloss.NewStyle().Foreground(lipgloss.Color("220"))
 	styleDim         = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
 	styleLabel       = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
-	styleGroupHeader = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("111"))
 )
 
 const (
@@ -41,16 +40,19 @@ const (
 
 // groupPalette gives each group a consistent, distinct color in the
 // sidebar tree - picked by hashing the group name, so "core" always
-// renders in the same color across runs without any config.
+// renders in the same color across runs without any config. Used as a
+// badge background behind white text, so every entry is dark/saturated
+// enough to keep that text readable - unlike a foreground-only swatch,
+// a pale color here would wash the label out.
 var groupPalette = []lipgloss.Color{
-	lipgloss.Color("111"), // blue
-	lipgloss.Color("212"), // pink
-	lipgloss.Color("150"), // green
-	lipgloss.Color("215"), // orange
-	lipgloss.Color("183"), // purple
-	lipgloss.Color("222"), // yellow
-	lipgloss.Color("80"),  // cyan
-	lipgloss.Color("203"), // red
+	lipgloss.Color("25"),  // blue
+	lipgloss.Color("130"), // orange
+	lipgloss.Color("28"),  // green
+	lipgloss.Color("125"), // magenta
+	lipgloss.Color("94"),  // brown
+	lipgloss.Color("30"),  // teal
+	lipgloss.Color("160"), // red
+	lipgloss.Color("55"),  // purple
 }
 
 // groupColor deterministically maps a group name to one of

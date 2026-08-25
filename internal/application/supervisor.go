@@ -200,36 +200,44 @@ func (s *Supervisor) log(name string, stream logs.Stream, msg string) {
 	s.logsMgr.Publish(logs.Event{Service: name, Stream: stream, Message: msg})
 }
 
-// StartAll starts every service configured with AutoStart. This is
-// for a bare invocation with nothing named explicitly (plain `godev`,
-// or `godev --detach` with no target) - what runs is entirely up to
-// each service's own auto_start setting, which defaults to false, so
-// a bare invocation with no configured auto-starters starts nothing.
+// StartAll starts every service configured with AutoStart, in
+// .godev.yaml's declared order (see config.File.Order), one at a
+// time. This is for a bare invocation with nothing named explicitly
+// (plain `godev`, or `godev --detach` with no target) - what runs is
+// entirely up to each service's own auto_start setting, which
+// defaults to false, so a bare invocation with no configured
+// auto-starters starts nothing.
 func (s *Supervisor) StartAll() {
+	var names []string
 	for _, name := range s.serviceNames() {
 		e, _ := s.entry(name)
 		if e.svc.AutoStart {
-			go func(n string) {
-				if err := s.Start(n); err != nil {
-					s.log(n, logs.StreamSystem, "start failed: "+err.Error())
-				}
-			}(name)
+			names = append(names, name)
 		}
 	}
+	go s.startSequentially(names)
 }
 
 // StartServices starts exactly the named services, regardless of each
 // one's AutoStart setting - for when the caller named what to run
 // explicitly (`godev run <target>...`), where being asked for by name
 // is itself the start signal, distinct from StartAll's "whatever's
-// configured to start on a bare invocation".
+// configured to start on a bare invocation". Same one-at-a-time
+// ordering as StartAll.
 func (s *Supervisor) StartServices(names []string) {
+	go s.startSequentially(names)
+}
+
+// startSequentially runs Start for each name in turn, waiting for one
+// to fully land (Running, or failed) before the next one's build even
+// starts - names[i+1] never races names[i] for the CPU. A failure
+// doesn't abort the batch: it's logged and the rest still start, same
+// as before this was made sequential.
+func (s *Supervisor) startSequentially(names []string) {
 	for _, name := range names {
-		go func(n string) {
-			if err := s.Start(n); err != nil {
-				s.log(n, logs.StreamSystem, "start failed: "+err.Error())
-			}
-		}(name)
+		if err := s.Start(name); err != nil {
+			s.log(name, logs.StreamSystem, "start failed: "+err.Error())
+		}
 	}
 }
 

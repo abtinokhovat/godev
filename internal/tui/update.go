@@ -242,8 +242,8 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 // handleMouse supports the mouse gestures that map cleanly onto
 // existing keyboard actions: the scroll wheel (any direction) moves
 // the content pane the same way pgup/pgdown/left/right do, and a left
-// click on a sidebar service row selects it, the same as navigating
-// there with up/down.
+// click on a sidebar service row selects it and focuses its logs, the
+// same as navigating there with up/down and then pressing enter.
 func (m Model) handleMouse(ev tea.MouseEvent) (tea.Model, tea.Cmd) {
 	switch ev.Button {
 	case tea.MouseButtonWheelUp:
@@ -272,11 +272,15 @@ func (m Model) handleMouse(ev tea.MouseEvent) (tea.Model, tea.Cmd) {
 		if ev.Action != tea.MouseActionPress {
 			return m, nil
 		}
-		if svc, ok := m.serviceAtScreenPos(ev.X, ev.Y); ok {
-			m.selected = svc
+		if idx, ok := m.serviceAtScreenPos(ev.X, ev.Y); ok {
+			m.selected = idx
 			m.scroll = 0
 			m.hScroll = 0
 			m.scrollSidebarToSelection()
+			if svc, ok := m.selectedService(); ok {
+				m.logScope = svc.Name
+				m.view = ViewLogs
+			}
 		}
 		return m, nil
 	}

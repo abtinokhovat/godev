@@ -115,4 +115,7 @@ func TestMouseClickSelectsSidebarService(t *testing.T) {
 	if m.services[got.selected].Name != "api" {
 		t.Fatalf("selected after click = %q, want api", m.services[got.selected].Name)
 	}
+	if got.logScope != "api" || got.view != ViewLogs {
+		t.Fatalf("click on a service should focus its logs like enter: logScope=%q view=%v, want logScope=api view=ViewLogs", got.logScope, got.view)
+	}
 }
