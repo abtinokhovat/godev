@@ -90,13 +90,6 @@ func (m Model) handleEvent(e eventMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 
-	if e.Message != "" {
-		m.status = string(e.Type) + ": " + e.Message
-	} else if e.Err != nil {
-		m.status = string(e.Type) + ": " + e.Err.Error()
-	} else {
-		m.status = string(e.Type)
-	}
 	return m, tea.Batch(cmds...)
 }
 

@@ -255,24 +255,72 @@ func cmdVersion() int {
 	return 0
 }
 
+// cmdList prints every configured service, grouped exactly like the
+// TUI sidebar does (see domain.PrimaryGroups): ungrouped services
+// first, then each group as a header with its services indented
+// beneath it, groups in first-appearance order. A service tagged into
+// more than one group is filed under its smallest one and noted as
+// "also in: ..." for the rest, since those extra tags are there for
+// `godev run <target>...` convenience, not to split the service
+// across multiple places in this listing.
 func cmdList() int {
 	p, err := loadProject()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
 		return 1
 	}
-	fmt.Println("SERVICES")
-	for _, s := range p.Services {
+
+	primary := domain.PrimaryGroups(p.Services)
+	printService := func(s domain.Service, indent string) {
 		kind := "package"
 		if s.IsCommand() {
 			kind = "command"
 		}
-		fmt.Printf("%s\n  %s: %s\n", s.Name, kind, serviceSource(s))
-		if len(s.Group) > 0 {
-			fmt.Printf("  group:   %s\n", strings.Join(s.Group, "/"))
+		fmt.Printf("%s%s\n%s  %s: %s\n", indent, s.Name, indent, kind, serviceSource(s))
+		if also := otherGroups(s, primary[s.Name]); also != "" {
+			fmt.Printf("%s  also in: %s\n", indent, also)
+		}
+	}
+
+	var ungrouped []domain.Service
+	var groupOrder []string
+	byGroup := map[string][]domain.Service{}
+	for _, s := range p.Services {
+		g, ok := primary[s.Name]
+		if !ok {
+			ungrouped = append(ungrouped, s)
+			continue
+		}
+		if _, seen := byGroup[g]; !seen {
+			groupOrder = append(groupOrder, g)
+		}
+		byGroup[g] = append(byGroup[g], s)
+	}
+
+	fmt.Println("SERVICES")
+	for _, s := range ungrouped {
+		printService(s, "")
+	}
+	for _, g := range groupOrder {
+		fmt.Printf("\n[%s]\n", g)
+		for _, s := range byGroup[g] {
+			printService(s, "  ")
 		}
 	}
 	return 0
+}
+
+// otherGroups lists a service's groups besides its primary (display)
+// one - the ones it's tagged into purely for `godev run
+// <target>...` convenience.
+func otherGroups(s domain.Service, primary string) string {
+	var extra []string
+	for _, g := range s.Group {
+		if g != primary {
+			extra = append(extra, g)
+		}
+	}
+	return strings.Join(extra, ", ")
 }
 
 // cmdInit is godev's only entry point for discovery: it runs `go

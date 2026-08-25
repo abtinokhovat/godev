@@ -64,7 +64,6 @@ type Model struct {
 	returnAt       time.Time
 
 	width, height int
-	status        string
 
 	eventsCh <-chan application.Event
 	logsCh   <-chan logs.Event
@@ -158,11 +157,16 @@ type groupRow struct {
 // then each group's services under a header, groups in order of first
 // appearance (not sorted - so a project's own service order still
 // drives what the user sees, per how discovery/config naturally order
-// things).
+// things). A service tagged into more than one group (`group: [core,
+// test]`, for `godev run <target>...` convenience) is displayed under
+// whichever is its smallest/most-specific one - see
+// domain.PrimaryGroups - never duplicated across headers.
 func (m Model) groupedRows() []groupRow {
+	primary := domain.PrimaryGroups(m.services)
+
 	var rows []groupRow
 	for i, svc := range m.services {
-		if len(svc.Group) == 0 {
+		if primary[svc.Name] == "" {
 			rows = append(rows, groupRow{ServiceIndex: i})
 		}
 	}
@@ -170,11 +174,11 @@ func (m Model) groupedRows() []groupRow {
 	var groupOrder []string
 	groupIndices := map[string][]int{}
 	for i, svc := range m.services {
-		if len(svc.Group) == 0 {
+		g, ok := primary[svc.Name]
+		if !ok {
 			continue
 		}
-		g := svc.Group[0]
-		if _, ok := groupIndices[g]; !ok {
+		if _, seen := groupIndices[g]; !seen {
 			groupOrder = append(groupOrder, g)
 		}
 		groupIndices[g] = append(groupIndices[g], i)
