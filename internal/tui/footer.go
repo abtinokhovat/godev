@@ -12,6 +12,7 @@ func (m Model) footerHints() []hint {
 		{"↑↓", "select"},
 		{"pgup/dn ←→", "scroll"},
 		{"1-4", "views"},
+		{"ctrl+r", "reload config"},
 		{"q", "quit"},
 	}
 	switch m.view {

@@ -28,4 +28,5 @@ type Source interface {
 	Restart(name string) error
 	StartDebug(name string) error
 	StopDebug(name string) error
+	Reload() error
 }

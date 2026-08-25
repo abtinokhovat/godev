@@ -76,7 +76,9 @@ around a terminal-native dashboard layout rather than an IDE: a narrow,
 always-visible sidebar for control and status, and a log-dominant
 content pane on the right. It never scans or rebuilds the service list
 on its own again - re-run `godev init` whenever you want to add newly
-discovered services.
+discovered services, or press `ctrl+r` inside the TUI to pick up edits
+already made to `.godev.yaml` by hand without restarting `godev`
+itself (see below).
 
 ```
 ┌ my-project ──────────────────────────────────── 3 service(s) · 1 running · reload ✓ ┐
@@ -118,8 +120,19 @@ Keys:
 ```
 ↑↓ select      enter focus service logs   a all logs        tab expand detail
 r restart      s start/stop               d start/stop debug  c clear logs
-1-4 views      pgup/pgdn scroll           q quit
+1-4 views      pgup/pgdn scroll           ctrl+r reload config q quit
 ```
+
+`ctrl+r` re-reads `.godev.yaml` and reconciles it against what's
+already running, without restarting anything that doesn't need it: a
+new entry is added (in the sidebar, not started - what to run is still
+a separate decision, same as `auto_start`), a service whose definition
+actually changed gets the new config and, only if it was already
+running, a restart with it; a service whose entry is byte-for-byte
+unchanged - the common case for editing a *different* service - is
+left completely alone. An entry removed from the file is left running
+as-is; reload only ever adds or updates, never stops something out
+from under you.
 
 `tab` temporarily widens the sidebar to show extra detail (package,
 uptime, ports, build status, arguments, environment) for the selected
@@ -367,7 +380,11 @@ error rather than silently failing.
 - **Supervisor** (`internal/application`): owns each service's
   lifecycle state machine, serializes build/start/stop/restart per
   service, and applies exponential backoff (1s → 30s, capped) on crash
-  loops, resetting once a service stays up for 30s.
+  loops, resetting once a service stays up for 30s. `Reload` (`ctrl+r`
+  in the TUI, or over the attach socket) re-reads `.godev.yaml` and
+  diffs it against the live service set by value (`reflect.DeepEqual`)
+  - new names are added un-started, changed-and-running services are
+  restarted, everything else is untouched.
 - **TUI** (`internal/tui`): a Bubble Tea front end that only calls the
   supervisor's public API — it never touches a process or Delve
   directly.

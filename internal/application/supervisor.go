@@ -91,14 +91,7 @@ func NewSupervisor(projectRoot string, services []domain.Service) (*Supervisor, 
 		deps:        newDepIndex(),
 	}
 	for _, svc := range services {
-		s.entries[svc.Name] = &serviceEntry{
-			svc:     svc,
-			runtime: domain.ServiceRuntime{State: domain.StateDiscovered},
-			backoff: newBackoff(),
-		}
-		s.order = append(s.order, svc.Name)
-		s.events.Publish(Event{Type: EventServiceDiscovered, Service: svc.Name,
-			Message: fmt.Sprintf("discovered %s (%s)", svc.Name, svc.Package)})
+		s.addService(svc)
 	}
 	return s, nil
 }
@@ -187,6 +180,16 @@ func (s *Supervisor) entry(name string) (*serviceEntry, bool) {
 	return e, ok
 }
 
+// serviceNames returns a snapshot of every known service name in
+// discovery/reload order - safe to range over even while Reload is
+// concurrently appending to the live s.order slice, unlike ranging
+// over s.order directly.
+func (s *Supervisor) serviceNames() []string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return append([]string(nil), s.order...)
+}
+
 func (s *Supervisor) setState(e *serviceEntry, name string, state domain.State) {
 	s.mu.Lock()
 	e.runtime.State = state
@@ -203,7 +206,7 @@ func (s *Supervisor) log(name string, stream logs.Stream, msg string) {
 // each service's own auto_start setting, which defaults to false, so
 // a bare invocation with no configured auto-starters starts nothing.
 func (s *Supervisor) StartAll() {
-	for _, name := range s.order {
+	for _, name := range s.serviceNames() {
 		e, _ := s.entry(name)
 		if e.svc.AutoStart {
 			go func(n string) {
@@ -234,7 +237,7 @@ func (s *Supervisor) StartServices(names []string) {
 // graceful-shutdown sequence.
 func (s *Supervisor) Shutdown() {
 	var wg sync.WaitGroup
-	for _, name := range s.order {
+	for _, name := range s.serviceNames() {
 		wg.Add(1)
 		go func(n string) {
 			defer wg.Done()

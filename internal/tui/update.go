@@ -65,6 +65,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 // event stream (and with it every sidebar status update) stalls
 // permanently the moment this function returns without it.
 func (m Model) handleEvent(e eventMsg) (tea.Model, tea.Cmd) {
+	if e.Type == application.EventServiceDiscovered || e.Type == application.EventServiceConfigChanged {
+		// A reload (ctrl+r) can add services, or change an existing
+		// one's definition (group, command, ...), after the TUI already
+		// started - the cached slice from New() needs picking up again.
+		// New services are only ever appended, so m.selected stays valid.
+		m.services = m.sup.Services()
+	}
+
 	for _, svc := range m.services {
 		if rt, ok := m.sup.Runtime(svc.Name); ok {
 			m.runtimes[svc.Name] = rt
@@ -222,6 +230,10 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.sup.ClearLogs()
 			m.logLines = nil
 		}
+		return m, nil
+
+	case "ctrl+r":
+		go m.sup.Reload()
 		return m, nil
 	}
 	return m, nil
