@@ -43,6 +43,43 @@ func TestBuildSuccessProducesRunnableBinary(t *testing.T) {
 	}
 }
 
+func TestBuildBinaryPathIsNamedForTheService(t *testing.T) {
+	root := t.TempDir()
+	svc := writeMainPkg(t, root, "package main\nfunc main() {}\n")
+
+	b, err := New(root)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	res, err := b.Build(svc, ModeNormal)
+	if err != nil || !res.Success {
+		t.Fatalf("Build: err=%v res=%+v", err, res)
+	}
+
+	if filepath.Base(res.BinaryPath) != svc.Name {
+		t.Fatalf("BinaryPath = %q, want a path ending in the service name %q (so ps/top show it, not the cache filename)", res.BinaryPath, svc.Name)
+	}
+	if _, err := os.Lstat(res.BinaryPath); err != nil {
+		t.Fatalf("named path should exist (as a symlink): %v", err)
+	}
+	if _, err := os.Stat(res.BinaryPath); err != nil {
+		t.Fatalf("named path should resolve to a runnable binary: %v", err)
+	}
+
+	// A second build must still resolve correctly (the symlink gets
+	// atomically replaced, not left stale or duplicated).
+	res2, err := b.Build(svc, ModeNormal)
+	if err != nil || !res2.Success {
+		t.Fatalf("second Build: err=%v res=%+v", err, res2)
+	}
+	if res2.BinaryPath != res.BinaryPath {
+		t.Fatalf("BinaryPath changed across rebuilds: %q vs %q, want the same named path both times", res.BinaryPath, res2.BinaryPath)
+	}
+	if _, err := os.Stat(res2.BinaryPath); err != nil {
+		t.Fatalf("named path should still resolve after a second build: %v", err)
+	}
+}
+
 func TestBuildFailurePreservesPreviousBinary(t *testing.T) {
 	root := t.TempDir()
 	svc := writeMainPkg(t, root, "package main\nfunc main() {}\n")

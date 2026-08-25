@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime/debug"
 	"strings"
 	"syscall"
 
@@ -211,6 +212,46 @@ func cmdMCP() int {
 	}
 
 	sup.Shutdown()
+	return 0
+}
+
+// cmdVersion prints whatever build/VCS info Go's toolchain embedded
+// automatically (since Go 1.18, `go build`/`go install` from a git
+// checkout capture the commit without any extra ldflags) - the
+// fastest way to tell "am I actually running the build with feature
+// X" apart from "I'm on a stale binary that predates it".
+func cmdVersion() int {
+	info, ok := debug.ReadBuildInfo()
+	if !ok {
+		fmt.Println("godev (build info unavailable)")
+		return 0
+	}
+	fmt.Printf("godev %s\n", info.Main.Version)
+	var revision, buildTime string
+	dirty := false
+	for _, s := range info.Settings {
+		switch s.Key {
+		case "vcs.revision":
+			revision = s.Value
+		case "vcs.time":
+			buildTime = s.Value
+		case "vcs.modified":
+			dirty = s.Value == "true"
+		}
+	}
+	if revision != "" {
+		if len(revision) > 12 {
+			revision = revision[:12]
+		}
+		if dirty {
+			revision += "-dirty"
+		}
+		fmt.Printf("  commit  %s\n", revision)
+	}
+	if buildTime != "" {
+		fmt.Printf("  built   %s\n", buildTime)
+	}
+	fmt.Printf("  go      %s\n", info.GoVersion)
 	return 0
 }
 

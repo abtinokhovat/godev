@@ -125,8 +125,14 @@ r restart      s start/stop               d start/stop debug  c clear logs
 uptime, build status, arguments, environment) for the selected service,
 without leaving the log-first layout.
 
-Editing a `.go` file anywhere in the project triggers a debounced
-rebuild-and-restart of every hot-reload-enabled service.
+Editing a `.go` file triggers a debounced rebuild-and-restart, scoped
+to only the hot-reload-enabled services whose build actually depends
+on that file (via `go list -json -deps`, refreshed after every
+change) - editing `pkg/shared/x.go` restarts every service that
+imports it, editing `cmd/api/main.go` restarts only `api`. A `go.mod`/
+`go.sum` change, or a change arriving before the dependency index has
+finished its first (background, non-blocking) computation, falls back
+to restarting everyone, since either could affect anything.
 
 ## Getting started
 
@@ -179,6 +185,8 @@ godev mcp                  # serve this project's services to an AI agent
                             # over MCP (stdio), for it to run/inspect/debug
 godev <service> [-- args]  # run one service in the foreground, with
                             # hot reload, passing one-off arguments
+godev version               # print the build's commit/version - useful
+                            # for confirming you're not on a stale binary
 ```
 
 ### Running detached
@@ -329,7 +337,15 @@ error rather than silently failing.
   directly.
 - **Process** (`internal/process`): each service is its own OS process
   in its own process group (so stopping it also stops its children),
-  started with `os.Environ()` plus service-specific overrides.
+  started with `os.Environ()` plus service-specific overrides. A Go
+  service execs through a same-named symlink to its built binary
+  (`internal/builder`), and a command-based service gets its argv[0]
+  overridden the same way, so `ps`/`top`/`pgrep` show the service name
+  (`api`) instead of a cache path or an interpreter's own name.
+- Concurrent `go build` invocations are capped at `GOMAXPROCS` across
+  the whole Supervisor (`buildSem`), so a crash loop or hot-reload
+  correlated across many services can't oversubscribe the CPU by
+  firing one build per service unboundedly.
 - **Watch** (`internal/watcher`): recursive `fsnotify` on `*.go`,
   `go.mod`, `go.sum`, debounced (default 200ms) into single rebuild
   batches.

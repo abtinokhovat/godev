@@ -32,7 +32,13 @@ func (s *Supervisor) build(e *serviceEntry, name string) (builder.Result, error)
 
 	s.log(name, logs.StreamSystem, "building...")
 
+	// Bound how many `go build` processes run at once across every
+	// service (see Supervisor.buildSem) - a crash loop or hot-reload
+	// correlated across many services shouldn't fire one unbounded
+	// build per service and oversubscribe the CPU.
+	s.buildSem <- struct{}{}
 	res, err := s.builder.Build(e.svc, builder.ModeNormal)
+	<-s.buildSem
 	if err != nil {
 		s.recordBuild(e, builder.Result{Success: false, Output: err.Error()})
 		s.events.Publish(Event{Type: EventBuildFailed, Service: name, Err: err})
@@ -100,6 +106,7 @@ func (s *Supervisor) startProcess(e *serviceEntry, name string, command []string
 		Dir:    e.svc.Directory,
 		Env:    process.BuildEnv(e.svc.Env),
 		Output: out,
+		Name:   name,
 	})
 	if err != nil {
 		s.mu.Lock()

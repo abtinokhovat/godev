@@ -7,6 +7,7 @@ package application
 
 import (
 	"fmt"
+	"runtime"
 	"sync"
 	"time"
 
@@ -58,6 +59,20 @@ type Supervisor struct {
 	logsMgr *logs.Manager
 	events  *EventBus
 
+	// buildSem bounds how many `go build` invocations run at once
+	// across every service this Supervisor manages. Without it, a
+	// crash-loop or hot-reload correlated across many services (a
+	// shared package edit, a group start) fires one build per service
+	// concurrently and unboundedly, oversubscribing the CPU and making
+	// every single build slower than it would be run one at a time -
+	// this caps concurrent compilation at GOMAXPROCS regardless of how
+	// many services need rebuilding at once.
+	buildSem chan struct{}
+
+	// deps scopes hot-reload restarts to only the services a changed
+	// file could actually affect - see depindex.go.
+	deps *depIndex
+
 	watchActive bool
 }
 
@@ -72,6 +87,8 @@ func NewSupervisor(projectRoot string, services []domain.Service) (*Supervisor, 
 		builder:     b,
 		logsMgr:     logs.NewManager(5000),
 		events:      NewEventBus(),
+		buildSem:    make(chan struct{}, runtime.GOMAXPROCS(0)),
+		deps:        newDepIndex(),
 	}
 	for _, svc := range services {
 		s.entries[svc.Name] = &serviceEntry{

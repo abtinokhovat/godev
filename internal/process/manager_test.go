@@ -65,6 +65,33 @@ loop:
 	}
 }
 
+func TestStartSetsNameAsArgvZero(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("test uses /bin/sh")
+	}
+	out := make(chan OutputLine, 8)
+	h, err := Start(StartOptions{
+		Binary: "/bin/sh",
+		Args:   []string{"-c", "echo $0"},
+		Env:    BuildEnv(nil),
+		Output: out,
+		Name:   "api",
+	})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer h.Wait()
+
+	select {
+	case line := <-out:
+		if line.Text != "api" {
+			t.Fatalf("argv[0] = %q, want %q (ps/top should show the service name, not the binary path)", line.Text, "api")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for output")
+	}
+}
+
 func TestBuildEnvOverridesWithoutDiscardingRest(t *testing.T) {
 	env := []string{"FOO=bar", "PATH=/usr/bin"}
 	merged := buildEnvFrom(env, map[string]string{"FOO": "baz", "NEW": "1"})

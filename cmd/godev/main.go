@@ -26,6 +26,7 @@ Usage:
   godev mcp                    Serve this project's services to an AI agent
                                 over MCP (stdio), for it to run/inspect/debug
   godev <service> [-- args]    Run one service in the foreground with hot reload
+  godev version                Print the build's commit/version
   godev help                   Show this message
 
 Services come from Go's own "go list" discovery, from an imported
@@ -75,6 +76,8 @@ func run(args []string) int {
 	case "help", "-h", "--help":
 		fmt.Print(usage)
 		return 0
+	case "version", "-v", "--version":
+		return cmdVersion()
 	case "list":
 		return cmdList()
 	case "init":
