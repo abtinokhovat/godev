@@ -112,8 +112,12 @@ selection automatically.
 The content pane has four views, switched with `1`-`4` (or `F1`-`F4`):
 
 1. **Logs** (default) — unified, service-prefixed, timestamped log
-   stream. Press `enter` on a selected service to scope the log view to
-   just that service, `a` to go back to all services.
+   stream. Each `[service]` prefix is colored by the service's group
+   (the same color as its sidebar badge), so a burst of interleaved
+   lines from several services still reads as "these came from the
+   same group" at a glance; an ungrouped service keeps the plain
+   default color. Press `enter` on a selected service to scope the log
+   view to just that service, `a` to go back to all services.
 2. **Build** — the selected service's last build output. Shown
    automatically whenever the selected service starts building, and
    automatically returns to whatever view was active once the build

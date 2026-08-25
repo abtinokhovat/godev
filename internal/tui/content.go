@@ -46,6 +46,7 @@ func (m Model) contentTitle() string {
 }
 
 func (m Model) renderLogsContent(width int) []string {
+	primary := domain.PrimaryGroups(m.services)
 	var out []string
 	for _, l := range m.logLines {
 		if m.logScope != "" && l.service != m.logScope {
@@ -61,7 +62,7 @@ func (m Model) renderLogsContent(width int) []string {
 		}
 		var line string
 		if m.logScope == "" {
-			line = ts + " " + styleService.Render(fmt.Sprintf("[%s]", l.service)) + " " + text
+			line = ts + " " + serviceLabelStyle(primary[l.service]).Render(fmt.Sprintf("[%s]", l.service)) + " " + text
 		} else {
 			line = ts + "  " + text
 		}
