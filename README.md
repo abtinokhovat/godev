@@ -83,7 +83,7 @@ itself (see below).
 ```
 ┌ my-project ──────────────────────────────────── 3 service(s) · 1 running · reload ✓ ┐
 │ SERVICES               │ LOGS · all services                                        │
-│ ● api    RUNNING       │ 16:42:31 [api]    GET /users 200                           │
+│ ● api    :8080 · PID.. │ 16:42:31 [api]    GET /users 200                           │
 │ ○ worker DISCOVERED    │ 16:42:31 [worker] processing job 9281                      │
 │ ○ web    DISCOVERED    │ 16:42:32 [api]    GET /users/42 200                        │
 │ ─────────────────────  │ ...                                                       │
@@ -96,6 +96,14 @@ itself (see below).
 └─────────────────────────┴───────────────────────────────────────────────────────────┘
 ```
 
+Services are always listed - here, in the sidebar, in `godev list` -
+in the order they're declared in `.godev.yaml`, never Go's own
+(randomized) map order. A bare `godev`, or `godev run <group>`,
+starts them in that same order, one at a time: a service's build (if
+it has one) doesn't even start until the previous service has finished
+starting (reached Running, or failed) - so a big batch never turns
+into several builds fighting each other for CPU.
+
 With more services than fit the terminal, the sidebar scrolls
 independently (`SERVICES 12-16/57`-style header) while RUNTIME/DEBUGGER
 stay pinned below it - `↑`/`↓` scrolls the window to follow the
@@ -104,8 +112,12 @@ selection automatically.
 The content pane has four views, switched with `1`-`4` (or `F1`-`F4`):
 
 1. **Logs** (default) — unified, service-prefixed, timestamped log
-   stream. Press `enter` on a selected service to scope the log view to
-   just that service, `a` to go back to all services.
+   stream. Each `[service]` prefix is colored by the service's group
+   (the same color as its sidebar badge), so a burst of interleaved
+   lines from several services still reads as "these came from the
+   same group" at a glance; an ungrouped service keeps the plain
+   default color. Press `enter` on a selected service to scope the log
+   view to just that service, `a` to go back to all services.
 2. **Build** — the selected service's last build output. Shown
    automatically whenever the selected service starts building, and
    automatically returns to whatever view was active once the build
@@ -122,6 +134,10 @@ Keys:
 r restart      s start/stop               d start/stop debug  c clear logs
 1-4 views      pgup/pgdn scroll           ctrl+r reload config q quit
 ```
+
+Mouse works too: clicking a sidebar service selects it and focuses its
+logs, same as navigating there and pressing `enter`; the scroll wheel
+moves the content pane the same way `pgup`/`pgdn`/`←`/`→` do.
 
 `ctrl+r` re-reads `.godev.yaml` and reconciles it against what's
 already running, without restarting anything that doesn't need it: a
@@ -313,9 +329,15 @@ ignored. A run configuration with no name is skipped outright - it has
 nothing to key a service on.
 
 A service's `group` (a `.godev.yaml` field, or a JetBrains
-configuration's folder) organizes the TUI sidebar into a tree, and
-`godev run <target>...` opens the TUI scoped to whatever mix of groups
-and individual service names you give it - e.g. `godev run core` if
+configuration's folder) organizes the TUI sidebar into a tree, each
+group header rendered as a colored badge (a consistent color per group
+name, so the same group always looks the same across runs) - a
+service listed in more than one group displays under whichever of its
+groups has the fewest members, on the theory that its more specific
+group is the more useful one to browse it under; every group it's in
+still works for `godev run <target>...`, which opens the TUI scoped to
+whatever mix of groups and individual service names you give it - e.g.
+`godev run core` if
 `web` above is grouped with some Go services named `core`, or
 `godev run core web api` to combine a group with extra individual
 services. Each matching service runs exactly once even if more than

@@ -40,10 +40,10 @@ func (m Model) renderSidebar() []string {
 	return append(lines, footer...)
 }
 
-// portsSuffix renders a service's discovered ports as a " · :80,:443"
-// style suffix, or "" if none have been observed yet - never
-// configured, just whatever internal/ports last found listening.
-func portsSuffix(ports []int) string {
+// portsList renders a service's discovered ports as "80,:443"-style
+// text ("" if none have been observed yet) - never configured, just
+// whatever internal/ports last found listening.
+func portsList(ports []int) string {
 	if len(ports) == 0 {
 		return ""
 	}
@@ -51,15 +51,20 @@ func portsSuffix(ports []int) string {
 	for i, p := range ports {
 		parts[i] = ":" + strconv.Itoa(p)
 	}
-	return " · " + strings.Join(parts, ",")
+	return strings.Join(parts, ",")
 }
 
 // renderSidebarRow renders one groupedRows() entry as its two lines:
 // a group header ("" + group name), or a service's name+status pair.
 func (m Model) renderSidebarRow(row groupRow, w int) []string {
 	if row.IsHeader {
-		swatch := lipgloss.NewStyle().Foreground(groupColor(row.Header)).Render("■")
-		return []string{"", swatch + " " + styleGroupHeader.Render(truncate(row.Header, w-2))}
+		badge := lipgloss.NewStyle().
+			Bold(true).
+			Foreground(lipgloss.Color("15")). // white text on top of the color, not beside it
+			Background(groupColor(row.Header)).
+			Padding(0, 1).
+			Render(truncate(row.Header, w-4))
+		return []string{"", badge}
 	}
 
 	svc := m.services[row.ServiceIndex]
@@ -71,12 +76,23 @@ func (m Model) renderSidebarRow(row groupRow, w int) []string {
 	}
 
 	nameLine := fmt.Sprintf("%s%s %-*s", indent, stateDot(rt.State), w-3-len(indent), truncate(svc.Name, w-4-len(indent)))
-	statusLine := indent + "  " + rt.State.String()
-	if rt.PID != 0 {
-		statusLine = fmt.Sprintf("%s  %s · PID %d", indent, rt.State.String(), rt.PID)
+
+	// The state dot already carries "running" (solid, colored) - the
+	// text label is redundant there and only worth showing for states
+	// the dot alone can't distinguish (building vs starting vs
+	// restarting all render the same dot). Ports lead, since they're
+	// what you actually reach the service through; PID trails.
+	var parts []string
+	if rt.State != domain.StateRunning {
+		parts = append(parts, rt.State.String())
 	}
-	statusLine += portsSuffix(rt.Ports)
-	statusLine = truncate(statusLine, w)
+	if p := portsList(rt.Ports); p != "" {
+		parts = append(parts, p)
+	}
+	if rt.PID != 0 {
+		parts = append(parts, fmt.Sprintf("PID %d", rt.PID))
+	}
+	statusLine := truncate(indent+"  "+strings.Join(parts, " · "), w)
 
 	if selected {
 		return []string{styleSelected.Render(padRight(nameLine, w)), styleSelected.Render(padRight(statusLine, w))}
@@ -167,7 +183,7 @@ func (m Model) renderDetail(svc domain.Service, w int) []string {
 	lines = append(lines, styleLabel.Render("Uptime   ")+uptime(rt))
 	ports := styleDim.Render("(none observed)")
 	if len(rt.Ports) > 0 {
-		ports = strings.TrimPrefix(portsSuffix(rt.Ports), " · ")
+		ports = portsList(rt.Ports)
 	}
 	lines = append(lines, styleLabel.Render("Ports    ")+ports)
 	buildFlag := styleDim.Render("--")

@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/abtinokhovat/godev/internal/domain"
@@ -19,7 +20,53 @@ const FileName = ".godev.yaml"
 
 // File is the on-disk shape of .godev.yaml.
 type File struct {
-	Services map[string]ServiceConfig `yaml:"services"`
+	Services map[string]ServiceConfig
+
+	// Order lists Services' keys in the order they were written in
+	// .godev.yaml (populated by UnmarshalYAML) - Go maps have no order
+	// of their own, and service ordering (the sidebar, `godev list`,
+	// and the order services actually start in) is meant to follow how
+	// the user laid the file out, not decode order. A File built
+	// directly rather than through Load (as tests do) may leave this
+	// empty; Merge falls back to a stable sorted order rather than raw
+	// map iteration in that case.
+	Order []string
+}
+
+// UnmarshalYAML walks the raw "services" mapping node itself instead
+// of decoding straight into File.Services, so it can additionally
+// record each key's position in Order - yaml.v3 decoding directly
+// into a Go map would otherwise lose that entirely, and Go
+// deliberately randomizes map iteration order, which would make
+// service ordering different on every single run.
+func (f *File) UnmarshalYAML(value *yaml.Node) error {
+	if value.Kind != yaml.MappingNode {
+		return fmt.Errorf("%s: expected a mapping at the top level", FileName)
+	}
+	for i := 0; i+1 < len(value.Content); i += 2 {
+		if value.Content[i].Value != "services" {
+			continue
+		}
+		servicesNode := value.Content[i+1]
+		if servicesNode.Kind == 0 || servicesNode.Tag == "!!null" {
+			return nil // "services:" with nothing under it
+		}
+		if servicesNode.Kind != yaml.MappingNode {
+			return fmt.Errorf("services: expected a mapping, got %v", servicesNode.Kind)
+		}
+		f.Services = make(map[string]ServiceConfig, len(servicesNode.Content)/2)
+		f.Order = make([]string, 0, len(servicesNode.Content)/2)
+		for j := 0; j+1 < len(servicesNode.Content); j += 2 {
+			name := servicesNode.Content[j].Value
+			var sc ServiceConfig
+			if err := servicesNode.Content[j+1].Decode(&sc); err != nil {
+				return fmt.Errorf("service %q: %w", name, err)
+			}
+			f.Services[name] = sc
+			f.Order = append(f.Order, name)
+		}
+	}
+	return nil
 }
 
 // ServiceConfig either overrides fields on a service discovery already
@@ -67,8 +114,11 @@ func Load(projectRoot string) (*File, error) {
 // then appends any config entries that don't match a discovered
 // service as new, standalone services. Discovered-service overrides
 // are applied in discovery order (stable); standalone services are
-// appended in the config file's map iteration order (Go map order is
-// randomized, but service identity/behavior doesn't depend on it).
+// appended in the order they're declared in .godev.yaml (see
+// File.Order) - since a normal `godev` invocation no longer discovers
+// anything at runtime (discovered is always nil), this file order is,
+// in practice, the service order everywhere: the sidebar, `godev
+// list`, and the order services actually start in.
 func Merge(projectRoot string, discovered []domain.Service, cfg *File) ([]domain.Service, error) {
 	if cfg == nil {
 		return discovered, nil
@@ -86,11 +136,11 @@ func Merge(projectRoot string, discovered []domain.Service, cfg *File) ([]domain
 		applyOverride(projectRoot, &result[i], sc)
 	}
 
-	for name, sc := range cfg.Services {
+	for _, name := range serviceOrder(cfg) {
 		if matched[name] {
 			continue
 		}
-		svc, err := newStandaloneService(projectRoot, name, sc)
+		svc, err := newStandaloneService(projectRoot, name, cfg.Services[name])
 		if err != nil {
 			return nil, fmt.Errorf("service %q in %s: %w", name, FileName, err)
 		}
@@ -98,6 +148,23 @@ func Merge(projectRoot string, discovered []domain.Service, cfg *File) ([]domain
 	}
 
 	return result, nil
+}
+
+// serviceOrder returns cfg.Services' keys in the order .godev.yaml
+// declared them (cfg.Order, populated by UnmarshalYAML), falling back
+// to a stable sorted order for a File built directly rather than
+// through Load (as tests do) - either way, never Go's own randomized
+// map iteration order.
+func serviceOrder(cfg *File) []string {
+	if len(cfg.Order) > 0 {
+		return cfg.Order
+	}
+	order := make([]string, 0, len(cfg.Services))
+	for name := range cfg.Services {
+		order = append(order, name)
+	}
+	sort.Strings(order)
+	return order
 }
 
 // newStandaloneService builds a domain.Service purely from config, for

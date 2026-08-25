@@ -81,6 +81,49 @@ func TestViewLogsScopedToSelectedService(t *testing.T) {
 	}
 }
 
+// TestServiceLabelStyleColorsByGroup exercises serviceLabelStyle
+// directly (not through Render(), which lipgloss silently strips of
+// all color codes when stdout isn't a real terminal - as it isn't
+// under `go test` - making ANSI-string assertions unreliable here;
+// GetForeground() reads the style's color without rendering).
+func TestServiceLabelStyleColorsByGroup(t *testing.T) {
+	core := serviceLabelStyle("core")
+	if got, want := core.GetForeground(), groupTextColor("core"); got != want {
+		t.Errorf("serviceLabelStyle(core).GetForeground() = %v, want %v (group core's text color)", got, want)
+	}
+
+	ungrouped := serviceLabelStyle("")
+	if got, want := ungrouped.GetForeground(), styleService.GetForeground(); got != want {
+		t.Errorf("serviceLabelStyle(\"\").GetForeground() = %v, want %v (plain fallback)", got, want)
+	}
+	if core.GetForeground() == ungrouped.GetForeground() {
+		t.Fatal("group core's color must differ from the ungrouped fallback color")
+	}
+}
+
+func TestLogPrefixColoredByGroup(t *testing.T) {
+	m := testModel(t)
+	// api and worker are both in group "core" (see testModel); scheduler
+	// is ungrouped. domain.PrimaryGroups is what renderLogsContent
+	// actually uses to pick each line's color - this exercises that
+	// same lookup, not a hand-built map, so it'd catch a wiring bug
+	// (e.g. keying by service instead of group) that a lower-level
+	// serviceLabelStyle-only test could not.
+	primary := domain.PrimaryGroups(m.services)
+	if primary["api"] != "core" || primary["worker"] != "core" {
+		t.Fatalf("test setup assumption broken: want api and worker both primary-grouped under core, got %v", primary)
+	}
+	if _, ok := primary["scheduler"]; ok {
+		t.Fatalf("test setup assumption broken: want scheduler ungrouped, got %v", primary)
+	}
+	if serviceLabelStyle(primary["api"]).GetForeground() != serviceLabelStyle(primary["worker"]).GetForeground() {
+		t.Error("api and worker, both in group core, must resolve to the same log-prefix color")
+	}
+	if serviceLabelStyle(primary["scheduler"]).GetForeground() == serviceLabelStyle(primary["api"]).GetForeground() {
+		t.Error("ungrouped scheduler must not resolve to group core's color")
+	}
+}
+
 func TestProblemsViewListsCrashedAndBuildFailed(t *testing.T) {
 	m := testModel(t)
 	m.width, m.height = 100, 30
