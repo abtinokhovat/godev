@@ -58,7 +58,8 @@ func portsSuffix(ports []int) string {
 // a group header ("" + group name), or a service's name+status pair.
 func (m Model) renderSidebarRow(row groupRow, w int) []string {
 	if row.IsHeader {
-		return []string{"", styleGroupHeader.Render(truncate(row.Header, w))}
+		swatch := lipgloss.NewStyle().Foreground(groupColor(row.Header)).Render("■")
+		return []string{"", swatch + " " + styleGroupHeader.Render(truncate(row.Header, w-2))}
 	}
 
 	svc := m.services[row.ServiceIndex]

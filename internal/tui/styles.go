@@ -1,6 +1,8 @@
 package tui
 
 import (
+	"hash/fnv"
+
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/abtinokhovat/godev/internal/domain"
@@ -36,6 +38,28 @@ const (
 	sidebarWidth         = 22
 	sidebarWidthExpanded = 34
 )
+
+// groupPalette gives each group a consistent, distinct color in the
+// sidebar tree - picked by hashing the group name, so "core" always
+// renders in the same color across runs without any config.
+var groupPalette = []lipgloss.Color{
+	lipgloss.Color("111"), // blue
+	lipgloss.Color("212"), // pink
+	lipgloss.Color("150"), // green
+	lipgloss.Color("215"), // orange
+	lipgloss.Color("183"), // purple
+	lipgloss.Color("222"), // yellow
+	lipgloss.Color("80"),  // cyan
+	lipgloss.Color("203"), // red
+}
+
+// groupColor deterministically maps a group name to one of
+// groupPalette's colors via FNV-1a.
+func groupColor(name string) lipgloss.Color {
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(name))
+	return groupPalette[h.Sum32()%uint32(len(groupPalette))]
+}
 
 func stateColor(s domain.State) lipgloss.Color {
 	switch s {
