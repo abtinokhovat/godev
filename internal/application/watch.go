@@ -48,7 +48,7 @@ func (s *Supervisor) WatchAndReload(debounceMs int) (func(), error) {
 func (s *Supervisor) reloadHotReloadServices(paths []string) {
 	affected, scoped := s.affectedByPaths(paths)
 
-	for _, name := range s.order {
+	for _, name := range s.serviceNames() {
 		e, ok := s.entry(name)
 		if !ok || !e.svc.HotReload || e.svc.IsCommand() {
 			continue

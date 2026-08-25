@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
@@ -23,21 +24,9 @@ func (m Model) sidebarWidth() int {
 // status stays visible no matter how many services there are.
 func (m Model) renderSidebar() []string {
 	w := m.sidebarWidth()
-	rows := m.groupedRows()
 	footer := m.renderSidebarFooter(w)
+	rows, start, end := m.sidebarVisibleWindow()
 	maxVisible := m.sidebarMaxVisibleRows()
-
-	start := m.sidebarScroll
-	if start < 0 {
-		start = 0
-	}
-	if maxStart := len(rows) - maxVisible; start > maxStart && maxStart >= 0 {
-		start = maxStart
-	}
-	end := start + maxVisible
-	if end > len(rows) {
-		end = len(rows)
-	}
 
 	title := "SERVICES"
 	if len(rows) > maxVisible {
@@ -51,11 +40,26 @@ func (m Model) renderSidebar() []string {
 	return append(lines, footer...)
 }
 
+// portsSuffix renders a service's discovered ports as a " · :80,:443"
+// style suffix, or "" if none have been observed yet - never
+// configured, just whatever internal/ports last found listening.
+func portsSuffix(ports []int) string {
+	if len(ports) == 0 {
+		return ""
+	}
+	parts := make([]string, len(ports))
+	for i, p := range ports {
+		parts[i] = ":" + strconv.Itoa(p)
+	}
+	return " · " + strings.Join(parts, ",")
+}
+
 // renderSidebarRow renders one groupedRows() entry as its two lines:
 // a group header ("" + group name), or a service's name+status pair.
 func (m Model) renderSidebarRow(row groupRow, w int) []string {
 	if row.IsHeader {
-		return []string{"", styleGroupHeader.Render(truncate(row.Header, w))}
+		swatch := lipgloss.NewStyle().Foreground(groupColor(row.Header)).Render("■")
+		return []string{"", swatch + " " + styleGroupHeader.Render(truncate(row.Header, w-2))}
 	}
 
 	svc := m.services[row.ServiceIndex]
@@ -71,6 +75,7 @@ func (m Model) renderSidebarRow(row groupRow, w int) []string {
 	if rt.PID != 0 {
 		statusLine = fmt.Sprintf("%s  %s · PID %d", indent, rt.State.String(), rt.PID)
 	}
+	statusLine += portsSuffix(rt.Ports)
 	statusLine = truncate(statusLine, w)
 
 	if selected {
@@ -160,6 +165,11 @@ func (m Model) renderDetail(svc domain.Service, w int) []string {
 		lines = append(lines, styleLabel.Render("Group    ")+truncate(strings.Join(svc.Group, "/"), w-9))
 	}
 	lines = append(lines, styleLabel.Render("Uptime   ")+uptime(rt))
+	ports := styleDim.Render("(none observed)")
+	if len(rt.Ports) > 0 {
+		ports = strings.TrimPrefix(portsSuffix(rt.Ports), " · ")
+	}
+	lines = append(lines, styleLabel.Render("Ports    ")+ports)
 	buildFlag := styleDim.Render("--")
 	if bi.Attempted {
 		if bi.Success {

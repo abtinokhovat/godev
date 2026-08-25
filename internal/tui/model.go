@@ -48,6 +48,7 @@ type Model struct {
 	logScope      string // "" = all services; otherwise a service name
 	expanded      bool   // Tab: sidebar shows an extra detail section for the selection
 	scroll        int    // lines scrolled up from the bottom of the content pane; 0 = follow tail
+	hScroll       int    // columns scrolled right in the content pane; 0 = flush left
 	sidebarScroll int    // index into groupedRows() of the first visible row; kept in view of m.selected
 
 	logLines    []logLine
@@ -63,7 +64,6 @@ type Model struct {
 	returnAt       time.Time
 
 	width, height int
-	status        string
 
 	eventsCh <-chan application.Event
 	logsCh   <-chan logs.Event
@@ -157,11 +157,16 @@ type groupRow struct {
 // then each group's services under a header, groups in order of first
 // appearance (not sorted - so a project's own service order still
 // drives what the user sees, per how discovery/config naturally order
-// things).
+// things). A service tagged into more than one group (`group: [core,
+// test]`, for `godev run <target>...` convenience) is displayed under
+// whichever is its smallest/most-specific one - see
+// domain.PrimaryGroups - never duplicated across headers.
 func (m Model) groupedRows() []groupRow {
+	primary := domain.PrimaryGroups(m.services)
+
 	var rows []groupRow
 	for i, svc := range m.services {
-		if len(svc.Group) == 0 {
+		if primary[svc.Name] == "" {
 			rows = append(rows, groupRow{ServiceIndex: i})
 		}
 	}
@@ -169,11 +174,11 @@ func (m Model) groupedRows() []groupRow {
 	var groupOrder []string
 	groupIndices := map[string][]int{}
 	for i, svc := range m.services {
-		if len(svc.Group) == 0 {
+		g, ok := primary[svc.Name]
+		if !ok {
 			continue
 		}
-		g := svc.Group[0]
-		if _, ok := groupIndices[g]; !ok {
+		if _, seen := groupIndices[g]; !seen {
 			groupOrder = append(groupOrder, g)
 		}
 		groupIndices[g] = append(groupIndices[g], i)
@@ -253,6 +258,30 @@ func (m Model) sidebarMaxVisibleRows() int {
 		maxVisible = 1
 	}
 	return maxVisible
+}
+
+// sidebarVisibleWindow returns groupedRows() along with the [start,
+// end) slice currently visible, given m.sidebarScroll and the
+// terminal's height - the single source of truth for "what's on
+// screen" shared by rendering (sidebar.go) and mouse hit-testing
+// (update.go), so the two can never disagree about which row a given
+// screen line belongs to.
+func (m Model) sidebarVisibleWindow() (rows []groupRow, start, end int) {
+	rows = m.groupedRows()
+	maxVisible := m.sidebarMaxVisibleRows()
+
+	start = m.sidebarScroll
+	if start < 0 {
+		start = 0
+	}
+	if maxStart := len(rows) - maxVisible; start > maxStart && maxStart >= 0 {
+		start = maxStart
+	}
+	end = start + maxVisible
+	if end > len(rows) {
+		end = len(rows)
+	}
+	return rows, start, end
 }
 
 // scrollSidebarToSelection clamps m.sidebarScroll so the current

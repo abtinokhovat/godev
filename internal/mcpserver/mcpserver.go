@@ -37,12 +37,12 @@ func New(sup *application.Supervisor, projectName string) *mcp.Server {
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "list_services",
-		Description: "List every service in this project: name, group, kind (go/command), current state, PID, and uptime.",
+		Description: "List every service in this project: name, group, kind (go/command), current state, PID, uptime, and any TCP ports observed listening.",
 	}, t.listServices)
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "get_service",
-		Description: "Get full detail for one service by name: state, PID, uptime, last error, build status, and debug session info if one is active.",
+		Description: "Get full detail for one service by name: state, PID, uptime, listening ports, last error, build status, and debug session info if one is active.",
 	}, t.getService)
 
 	mcp.AddTool(server, &mcp.Tool{

@@ -185,3 +185,10 @@ func (r *RemoteSource) Stop(name string) error       { return r.sendAction(actio
 func (r *RemoteSource) Restart(name string) error    { return r.sendAction(actionRestart, name) }
 func (r *RemoteSource) StartDebug(name string) error { return r.sendAction(actionStartDebug, name) }
 func (r *RemoteSource) StopDebug(name string) error  { return r.sendAction(actionStopDebug, name) }
+
+// Reload asks the detached instance to re-read its .godev.yaml and
+// reconcile - fire-and-forget like every other action; the outcome
+// (new services discovered, changed services restarted, or a failure
+// reading the file) surfaces the normal way, as events and log lines
+// flowing back through the stream.
+func (r *RemoteSource) Reload() error { return r.sendAction(actionReload, "") }

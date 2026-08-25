@@ -204,6 +204,30 @@ func TestResolveTargetsGroupTakesPrecedenceOverSameNamedService(t *testing.T) {
 	}
 }
 
+func TestResolveTargetsMatchesAnyOfAServicesGroups(t *testing.T) {
+	// A service can list more than one group (group: [core, test] in
+	// .godev.yaml) - it must be reachable by any of them, not just the
+	// first, per the reported bug: `godev run test` on a service in
+	// [core, test] errored "no group or service named test".
+	services := []domain.Service{
+		{Name: "api", Group: []string{"core", "test"}},
+		{Name: "worker", Group: []string{"core"}},
+		{Name: "e2e", Group: []string{"test"}},
+	}
+
+	got, err := resolveTargets(services, []string{"test"})
+	if err != nil {
+		t.Fatalf("resolveTargets: %v", err)
+	}
+	names := map[string]bool{}
+	for _, s := range got {
+		names[s.Name] = true
+	}
+	if !names["api"] || !names["e2e"] || names["worker"] {
+		t.Fatalf("resolveTargets(test) = %v, want [api, e2e] (worker isn't in \"test\")", names)
+	}
+}
+
 func TestResolveTargetsUnknownTargetErrors(t *testing.T) {
 	services := []domain.Service{{Name: "api"}}
 	_, err := resolveTargets(services, []string{"api", "nonexistent"})

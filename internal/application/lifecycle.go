@@ -32,13 +32,7 @@ func (s *Supervisor) build(e *serviceEntry, name string) (builder.Result, error)
 
 	s.log(name, logs.StreamSystem, "building...")
 
-	// Bound how many `go build` processes run at once across every
-	// service (see Supervisor.buildSem) - a crash loop or hot-reload
-	// correlated across many services shouldn't fire one unbounded
-	// build per service and oversubscribe the CPU.
-	s.buildSem <- struct{}{}
 	res, err := s.builder.Build(e.svc, builder.ModeNormal)
-	<-s.buildSem
 	if err != nil {
 		s.recordBuild(e, builder.Result{Success: false, Output: err.Error()})
 		s.events.Publish(Event{Type: EventBuildFailed, Service: name, Err: err})
@@ -77,11 +71,26 @@ func (s *Supervisor) Start(name string) error {
 		return nil
 	}
 
+	return s.buildAndStart(e, name)
+}
+
+// buildAndStart builds (if needed) and starts a service, the two
+// bound together by Supervisor.buildSem - not just the `go build`
+// step - so a burst of many services launching at once (a big `godev
+// run <group>`, a crash loop correlated across several services) can't
+// fire unbounded concurrent builds *and* unbounded concurrent process
+// launches on top of that. Command-based services, which have no
+// build step of their own, are still gated here: starting a pile of
+// heavy processes at once is its own source of load, independent of
+// compilation.
+func (s *Supervisor) buildAndStart(e *serviceEntry, name string) error {
+	s.buildSem <- struct{}{}
+	defer func() { <-s.buildSem }()
+
 	res, err := s.build(e, name)
 	if err != nil {
 		return err
 	}
-
 	return s.startProcess(e, name, runCommand(e.svc, res))
 }
 
@@ -133,6 +142,7 @@ func (s *Supervisor) startProcess(e *serviceEntry, name string, command []string
 
 	go s.pumpOutput(name, out)
 	go s.monitor(e, name, handle, gen)
+	go s.pollPorts(e, name, handle.PID, gen, handle.Done())
 	return nil
 }
 
@@ -179,6 +189,7 @@ func (s *Supervisor) monitor(e *serviceEntry, name string, handle *process.Handl
 	e.runtime.State = domain.StateCrashed
 	e.runtime.PID = 0
 	e.runtime.LastError = exitMsg
+	e.runtime.Ports = nil
 	s.mu.Unlock()
 	s.events.Publish(Event{Type: EventServiceCrashed, Service: name, Message: exitMsg})
 	s.log(name, logs.StreamSystem, "crashed: "+exitMsg)
@@ -216,11 +227,7 @@ func (s *Supervisor) crashRestart(e *serviceEntry, name string) {
 	}
 
 	s.setState(e, name, domain.StateRestarting)
-	res, err := s.build(e, name)
-	if err != nil {
-		return
-	}
-	_ = s.startProcess(e, name, runCommand(e.svc, res))
+	_ = s.buildAndStart(e, name)
 
 	// Reset backoff once the service has stayed up long enough (section 25).
 	go e.backoff.watchStability(func() bool {
@@ -249,6 +256,7 @@ func (s *Supervisor) finalizeStopped(e *serviceEntry, name string) {
 	}
 	e.runtime.State = domain.StateStopped
 	e.runtime.PID = 0
+	e.runtime.Ports = nil
 	s.mu.Unlock()
 	s.events.Publish(Event{Type: EventServiceStopped, Service: name})
 	s.log(name, logs.StreamSystem, "stopped")

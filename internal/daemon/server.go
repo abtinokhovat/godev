@@ -211,5 +211,7 @@ func (s *Server) dispatchAction(a actionFrame) {
 		go s.sup.StartDebug(a.Service)
 	case actionStopDebug:
 		go s.sup.StopDebug(a.Service)
+	case actionReload:
+		go s.sup.Reload()
 	}
 }

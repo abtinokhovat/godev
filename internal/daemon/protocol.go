@@ -83,7 +83,7 @@ func (f eventFrame) toEvent() application.Event {
 // same as the in-process TUI's own `go m.sup.X(name)` dispatch already
 // works.
 type actionFrame struct {
-	Action  string // "start" | "stop" | "restart" | "start_debug" | "stop_debug"
+	Action  string // "start" | "stop" | "restart" | "start_debug" | "stop_debug" | "reload"
 	Service string
 }
 
@@ -93,4 +93,5 @@ const (
 	actionRestart    = "restart"
 	actionStartDebug = "start_debug"
 	actionStopDebug  = "stop_debug"
+	actionReload     = "reload" // Service is unused - reload always re-reads the whole project's .godev.yaml
 )

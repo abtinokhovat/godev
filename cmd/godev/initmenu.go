@@ -252,7 +252,7 @@ func runInitMenu(candidates []candidate, existingNames map[string]bool) ([]candi
 		items[i] = initItem{candidate: c, name: c.Name}
 	}
 	m := initMenuModel{items: items, existingNames: existingNames}
-	program := tea.NewProgram(m)
+	program := tea.NewProgram(m, tea.WithMouseCellMotion())
 	final, err := program.Run()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
@@ -277,10 +277,13 @@ func runInitMenu(candidates []candidate, existingNames map[string]bool) ([]candi
 func (m initMenuModel) Init() tea.Cmd { return nil }
 
 func (m initMenuModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	winMsg, ok := msg.(tea.WindowSizeMsg)
-	if ok {
+	if winMsg, ok := msg.(tea.WindowSizeMsg); ok {
 		m.width = winMsg.Width
 		return m, nil
+	}
+
+	if mouseMsg, ok := msg.(tea.MouseMsg); ok {
+		return m.handleMouse(tea.MouseEvent(mouseMsg))
 	}
 
 	keyMsg, ok := msg.(tea.KeyMsg)
@@ -333,6 +336,23 @@ func (m initMenuModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.confirmed = true
 		return m, tea.Quit
 	}
+	return m, nil
+}
+
+// handleMouse lets a left click do what space+the cursor would: the
+// header (y=0), the blank line under it (y=1), and any click while
+// renaming are all no-ops - items start at y=2, one screen line each.
+func (m initMenuModel) handleMouse(ev tea.MouseEvent) (tea.Model, tea.Cmd) {
+	if m.renaming || ev.Button != tea.MouseButtonLeft || ev.Action != tea.MouseActionPress {
+		return m, nil
+	}
+	idx := ev.Y - 2
+	if idx < 0 || idx >= len(m.items) {
+		return m, nil
+	}
+	m.cursor = idx
+	m.items[idx].selected = !m.items[idx].selected
+	m.errMsg = ""
 	return m, nil
 }
 

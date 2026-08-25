@@ -1,7 +1,11 @@
 package application
 
 import (
+	"fmt"
+	"os"
+	"os/exec"
 	"runtime"
+	"sync"
 	"testing"
 	"time"
 
@@ -67,6 +71,124 @@ func TestCommandServiceStartSkipsBuildAndRuns(t *testing.T) {
 // which made the process's own monitor() goroutine think itself
 // superseded and skip its Stopped transition entirely - the service
 // got stuck at Stopping forever. Stop() must always settle at Stopped.
+// TestBuildSemBoundsConcurrentCommandServiceStarts covers the gap a
+// build-only semaphore would leave: command-based services skip the
+// build step entirely, so if buildAndStart's semaphore only wrapped
+// `go build`, starting a pile of them at once (a big `godev run
+// <group>`) would be completely unbounded. Starts many concurrently
+// and checks the semaphore never over-admits and always drains back
+// to empty - a leaked slot would permanently under-provision every
+// build/start after it.
+func TestBuildSemBoundsConcurrentCommandServiceStarts(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("test uses /bin/sh")
+	}
+	const n = 20
+	services := make([]domain.Service, n)
+	for i := range services {
+		services[i] = domain.Service{
+			Name:      fmt.Sprintf("svc-%02d", i),
+			Command:   []string{"/bin/sh", "-c", "sleep 2"},
+			Directory: t.TempDir(),
+		}
+	}
+	sup, err := NewSupervisor(t.TempDir(), services)
+	if err != nil {
+		t.Fatalf("NewSupervisor: %v", err)
+	}
+	t.Cleanup(sup.Shutdown)
+
+	var wg sync.WaitGroup
+	for _, svc := range services {
+		wg.Add(1)
+		go func(name string) {
+			defer wg.Done()
+			if err := sup.Start(name); err != nil {
+				t.Errorf("Start(%s): %v", name, err)
+			}
+		}(svc.Name)
+	}
+	wg.Wait()
+
+	for _, svc := range services {
+		waitForState(t, sup, svc.Name, domain.StateRunning, 2*time.Second)
+	}
+
+	if len(sup.buildSem) != 0 {
+		t.Fatalf("buildSem has %d slots still held after every Start returned, want 0 (a leaked slot)", len(sup.buildSem))
+	}
+}
+
+// TestRunningServicePortIsDiscoveredAndClearedOnStop is an end-to-end
+// check of the Supervisor <-> internal/ports wiring (see ports.go):
+// a service that actually opens a TCP listener should have it show up
+// in Runtime().Ports shortly after starting, and Ports should clear
+// once the service is stopped - not linger as stale "last known"
+// data for a service that isn't running anymore. Linux-only since
+// internal/ports' /proc-based discovery is what's being exercised
+// here (its own package covers the platform-specific mechanics).
+func TestRunningServicePortIsDiscoveredAndClearedOnStop(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("exercises internal/ports' /proc-based discovery")
+	}
+	dir := t.TempDir()
+	if err := os.WriteFile(dir+"/go.mod", []byte("module listener\n\ngo 1.24\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	src := `
+package main
+
+import ("fmt"; "net"; "time")
+
+func main() {
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil { panic(err) }
+	fmt.Println(l.Addr().(*net.TCPAddr).Port)
+	time.Sleep(10 * time.Second)
+}
+`
+	if err := os.WriteFile(dir+"/main.go", []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	binPath := dir + "/listener"
+	if out, err := exec.Command("go", "build", "-o", binPath, dir+"/main.go").CombinedOutput(); err != nil {
+		t.Fatalf("building test listener: %v\n%s", err, out)
+	}
+
+	svc := domain.Service{Name: "web", Command: []string{binPath}, Directory: dir}
+	sup, err := NewSupervisor(t.TempDir(), []domain.Service{svc})
+	if err != nil {
+		t.Fatalf("NewSupervisor: %v", err)
+	}
+	t.Cleanup(sup.Shutdown)
+
+	if err := sup.Start("web"); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	waitForState(t, sup, "web", domain.StateRunning, 2*time.Second)
+
+	deadline := time.Now().Add(3 * time.Second)
+	var rt domain.ServiceRuntime
+	for time.Now().Before(deadline) {
+		rt, _ = sup.Runtime("web")
+		if len(rt.Ports) > 0 {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if len(rt.Ports) != 1 {
+		t.Fatalf("Runtime(web).Ports = %v, want exactly 1 discovered port", rt.Ports)
+	}
+
+	if err := sup.Stop("web"); err != nil {
+		t.Fatalf("Stop: %v", err)
+	}
+	rt, _ = sup.Runtime("web")
+	if len(rt.Ports) != 0 {
+		t.Fatalf("Runtime(web).Ports after Stop = %v, want cleared (empty)", rt.Ports)
+	}
+}
+
 func TestStopOfRunningServiceReachesStopped(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("test uses /bin/sh")

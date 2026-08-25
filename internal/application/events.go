@@ -9,21 +9,23 @@ import (
 type EventType string
 
 const (
-	EventServiceDiscovered EventType = "service_discovered"
-	EventBuildStarted      EventType = "build_started"
-	EventBuildSucceeded    EventType = "build_succeeded"
-	EventBuildFailed       EventType = "build_failed"
-	EventServiceStarting   EventType = "service_starting"
-	EventServiceStarted    EventType = "service_started"
-	EventServiceStopping   EventType = "service_stopping"
-	EventServiceStopped    EventType = "service_stopped"
-	EventServiceCrashed    EventType = "service_crashed"
-	EventServiceRestarting EventType = "service_restarting"
-	EventFileChanged       EventType = "file_changed"
-	EventDebuggerStarting  EventType = "debugger_starting"
-	EventDebuggerStarted   EventType = "debugger_started"
-	EventDebuggerStopped   EventType = "debugger_stopped"
-	EventDebuggerFailed    EventType = "debugger_failed"
+	EventServiceDiscovered    EventType = "service_discovered"
+	EventBuildStarted         EventType = "build_started"
+	EventBuildSucceeded       EventType = "build_succeeded"
+	EventBuildFailed          EventType = "build_failed"
+	EventServiceStarting      EventType = "service_starting"
+	EventServiceStarted       EventType = "service_started"
+	EventServiceStopping      EventType = "service_stopping"
+	EventServiceStopped       EventType = "service_stopped"
+	EventServiceCrashed       EventType = "service_crashed"
+	EventServiceRestarting    EventType = "service_restarting"
+	EventServiceConfigChanged EventType = "service_config_changed"
+	EventFileChanged          EventType = "file_changed"
+	EventDebuggerStarting     EventType = "debugger_starting"
+	EventDebuggerStarted      EventType = "debugger_started"
+	EventDebuggerStopped      EventType = "debugger_stopped"
+	EventDebuggerFailed       EventType = "debugger_failed"
+	EventPortsChanged         EventType = "ports_changed"
 )
 
 // Event is a single notification from the supervisor to any listener

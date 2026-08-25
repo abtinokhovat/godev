@@ -76,7 +76,9 @@ around a terminal-native dashboard layout rather than an IDE: a narrow,
 always-visible sidebar for control and status, and a log-dominant
 content pane on the right. It never scans or rebuilds the service list
 on its own again - re-run `godev init` whenever you want to add newly
-discovered services.
+discovered services, or press `ctrl+r` inside the TUI to pick up edits
+already made to `.godev.yaml` by hand without restarting `godev`
+itself (see below).
 
 ```
 ┌ my-project ──────────────────────────────────── 3 service(s) · 1 running · reload ✓ ┐
@@ -118,12 +120,26 @@ Keys:
 ```
 ↑↓ select      enter focus service logs   a all logs        tab expand detail
 r restart      s start/stop               d start/stop debug  c clear logs
-1-4 views      pgup/pgdn scroll           q quit
+1-4 views      pgup/pgdn scroll           ctrl+r reload config q quit
 ```
 
+`ctrl+r` re-reads `.godev.yaml` and reconciles it against what's
+already running, without restarting anything that doesn't need it: a
+new entry is added (in the sidebar, not started - what to run is still
+a separate decision, same as `auto_start`), a service whose definition
+actually changed gets the new config and, only if it was already
+running, a restart with it; a service whose entry is byte-for-byte
+unchanged - the common case for editing a *different* service - is
+left completely alone. An entry removed from the file is left running
+as-is; reload only ever adds or updates, never stops something out
+from under you.
+
 `tab` temporarily widens the sidebar to show extra detail (package,
-uptime, build status, arguments, environment) for the selected service,
-without leaving the log-first layout.
+uptime, ports, build status, arguments, environment) for the selected
+service, without leaving the log-first layout. Ports are never
+configured - godev watches the OS for what a running process is
+actually listening on (`:8080`, or `:8080,:9090` for more than one)
+and shows whatever it finds, a few seconds after the process starts.
 
 Editing a `.go` file triggers a debounced rebuild-and-restart, scoped
 to only the hot-reload-enabled services whose build actually depends
@@ -342,10 +358,18 @@ error rather than silently failing.
   (`internal/builder`), and a command-based service gets its argv[0]
   overridden the same way, so `ps`/`top`/`pgrep` show the service name
   (`api`) instead of a cache path or an interpreter's own name.
-- Concurrent `go build` invocations are capped at `GOMAXPROCS` across
-  the whole Supervisor (`buildSem`), so a crash loop or hot-reload
-  correlated across many services can't oversubscribe the CPU by
-  firing one build per service unboundedly.
+- Concurrent service launches (build, when there is one, plus the
+  actual process start) are capped at `GOMAXPROCS` across the whole
+  Supervisor (`buildSem`), so a crash loop or a big `godev run
+  <group>` correlated across many services can't fire unbounded
+  concurrent builds *and* unbounded concurrent process launches on
+  top of that.
+- **Ports** (`internal/ports`): a background poll (every 2s, starting
+  immediately after launch) checks what TCP ports each running
+  process is actually listening on - `/proc` on Linux, `lsof` on
+  macOS, `netstat` on Windows - and shows them in the sidebar detail
+  view and over MCP. Never configured; a process can (and often does)
+  report more than one.
 - **Watch** (`internal/watcher`): recursive `fsnotify` on `*.go`,
   `go.mod`, `go.sum`, debounced (default 200ms) into single rebuild
   batches.
@@ -356,7 +380,11 @@ error rather than silently failing.
 - **Supervisor** (`internal/application`): owns each service's
   lifecycle state machine, serializes build/start/stop/restart per
   service, and applies exponential backoff (1s → 30s, capped) on crash
-  loops, resetting once a service stays up for 30s.
+  loops, resetting once a service stays up for 30s. `Reload` (`ctrl+r`
+  in the TUI, or over the attach socket) re-reads `.godev.yaml` and
+  diffs it against the live service set by value (`reflect.DeepEqual`)
+  - new names are added un-started, changed-and-running services are
+  restarted, everything else is untouched.
 - **TUI** (`internal/tui`): a Bubble Tea front end that only calls the
   supervisor's public API — it never touches a process or Delve
   directly.
