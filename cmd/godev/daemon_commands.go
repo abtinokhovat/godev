@@ -147,7 +147,7 @@ func cmdAttach() int {
 	defer remote.Close()
 
 	m := tui.New(remote, filepath.Base(p.Root)+" (attached)")
-	program := tea.NewProgram(m, tea.WithAltScreen())
+	program := tea.NewProgram(m, tea.WithAltScreen(), tea.WithMouseCellMotion())
 
 	// If the daemon connection drops for any reason (killed elsewhere,
 	// crashed), quit the attached TUI instead of leaving it sitting on

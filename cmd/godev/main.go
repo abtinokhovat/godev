@@ -49,9 +49,13 @@ the normal TUI against it (control included: restart/stop/debug from
 the attached TUI act on the real, running instance), and "godev kill"
 stops it.
 
-In the TUI: up/down select, enter focus a service's logs, tab expand
-detail, r restart, s start/stop, d toggle debugger, c clear logs,
-1-4 (or F1-F4) switch views, pgup/pgdn scroll, q quit.
+In the TUI: up/down select, enter focus a service's logs, a/esc back
+to all logs, tab expand detail, r restart, s start/stop, d toggle
+debugger, c clear logs, 1-4 (or F1-F4) switch views, pgup/pgdn/left/
+right scroll the content pane vertically/horizontally, q quit. The
+sidebar and content pane both also respond to the mouse: click a
+service to select it, scroll wheel to scroll (shift/tilt for
+horizontal, where the terminal supports it).
 `
 
 func main() {

@@ -160,7 +160,7 @@ func runTUI(p *project, services []domain.Service, label string, startNames []st
 	}
 
 	m := tui.New(sup, label)
-	program := tea.NewProgram(m, tea.WithAltScreen())
+	program := tea.NewProgram(m, tea.WithAltScreen(), tea.WithMouseCellMotion())
 	if _, err := program.Run(); err != nil {
 		fmt.Fprintln(os.Stderr, "tui error:", err)
 	}

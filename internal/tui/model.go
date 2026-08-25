@@ -48,6 +48,7 @@ type Model struct {
 	logScope      string // "" = all services; otherwise a service name
 	expanded      bool   // Tab: sidebar shows an extra detail section for the selection
 	scroll        int    // lines scrolled up from the bottom of the content pane; 0 = follow tail
+	hScroll       int    // columns scrolled right in the content pane; 0 = flush left
 	sidebarScroll int    // index into groupedRows() of the first visible row; kept in view of m.selected
 
 	logLines    []logLine
@@ -253,6 +254,30 @@ func (m Model) sidebarMaxVisibleRows() int {
 		maxVisible = 1
 	}
 	return maxVisible
+}
+
+// sidebarVisibleWindow returns groupedRows() along with the [start,
+// end) slice currently visible, given m.sidebarScroll and the
+// terminal's height - the single source of truth for "what's on
+// screen" shared by rendering (sidebar.go) and mouse hit-testing
+// (update.go), so the two can never disagree about which row a given
+// screen line belongs to.
+func (m Model) sidebarVisibleWindow() (rows []groupRow, start, end int) {
+	rows = m.groupedRows()
+	maxVisible := m.sidebarMaxVisibleRows()
+
+	start = m.sidebarScroll
+	if start < 0 {
+		start = 0
+	}
+	if maxStart := len(rows) - maxVisible; start > maxStart && maxStart >= 0 {
+		start = maxStart
+	}
+	end = start + maxVisible
+	if end > len(rows) {
+		end = len(rows)
+	}
+	return rows, start, end
 }
 
 // scrollSidebarToSelection clamps m.sidebarScroll so the current

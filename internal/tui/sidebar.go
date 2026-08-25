@@ -23,21 +23,9 @@ func (m Model) sidebarWidth() int {
 // status stays visible no matter how many services there are.
 func (m Model) renderSidebar() []string {
 	w := m.sidebarWidth()
-	rows := m.groupedRows()
 	footer := m.renderSidebarFooter(w)
+	rows, start, end := m.sidebarVisibleWindow()
 	maxVisible := m.sidebarMaxVisibleRows()
-
-	start := m.sidebarScroll
-	if start < 0 {
-		start = 0
-	}
-	if maxStart := len(rows) - maxVisible; start > maxStart && maxStart >= 0 {
-		start = maxStart
-	}
-	end := start + maxVisible
-	if end > len(rows) {
-		end = len(rows)
-	}
 
 	title := "SERVICES"
 	if len(rows) > maxVisible {

@@ -1,5 +1,7 @@
 package tui
 
+import "github.com/charmbracelet/x/ansi"
+
 func (m Model) View() string {
 	if m.quitting {
 		return "shutting down services...\n"
@@ -29,6 +31,15 @@ func (m Model) View() string {
 		contentHeight = 0
 	}
 	visible := window(contentAll, m.scroll, contentHeight)
+	// Cut each line to the horizontal viewport - ANSI-aware, so a
+	// scrolled-right styled log line doesn't clip mid-escape-sequence
+	// and bleed color into the rest of the row. This also doubles as
+	// safe truncation at hScroll=0: a long line no longer overflows
+	// past contentWidth and wraps the terminal, breaking the sidebar's
+	// column alignment.
+	for i, line := range visible {
+		visible[i] = ansi.Cut(line, m.hScroll, m.hScroll+contentWidth)
+	}
 	contentLines := append([]string{title, ""}, visible...)
 
 	body := joinColumns(sidebarLines, contentLines, m.sidebarWidth(), bodyHeight)
