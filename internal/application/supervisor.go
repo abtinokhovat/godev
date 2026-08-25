@@ -69,6 +69,10 @@ type Supervisor struct {
 	// many services need rebuilding at once.
 	buildSem chan struct{}
 
+	// deps scopes hot-reload restarts to only the services a changed
+	// file could actually affect - see depindex.go.
+	deps *depIndex
+
 	watchActive bool
 }
 
@@ -84,6 +88,7 @@ func NewSupervisor(projectRoot string, services []domain.Service) (*Supervisor, 
 		logsMgr:     logs.NewManager(5000),
 		events:      NewEventBus(),
 		buildSem:    make(chan struct{}, runtime.GOMAXPROCS(0)),
+		deps:        newDepIndex(),
 	}
 	for _, svc := range services {
 		s.entries[svc.Name] = &serviceEntry{

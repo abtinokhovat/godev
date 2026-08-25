@@ -125,8 +125,14 @@ r restart      s start/stop               d start/stop debug  c clear logs
 uptime, build status, arguments, environment) for the selected service,
 without leaving the log-first layout.
 
-Editing a `.go` file anywhere in the project triggers a debounced
-rebuild-and-restart of every hot-reload-enabled service.
+Editing a `.go` file triggers a debounced rebuild-and-restart, scoped
+to only the hot-reload-enabled services whose build actually depends
+on that file (via `go list -json -deps`, refreshed after every
+change) - editing `pkg/shared/x.go` restarts every service that
+imports it, editing `cmd/api/main.go` restarts only `api`. A `go.mod`/
+`go.sum` change, or a change arriving before the dependency index has
+finished its first (background, non-blocking) computation, falls back
+to restarting everyone, since either could affect anything.
 
 ## Getting started
 
@@ -179,6 +185,8 @@ godev mcp                  # serve this project's services to an AI agent
                             # over MCP (stdio), for it to run/inspect/debug
 godev <service> [-- args]  # run one service in the foreground, with
                             # hot reload, passing one-off arguments
+godev version               # print the build's commit/version - useful
+                            # for confirming you're not on a stale binary
 ```
 
 ### Running detached
