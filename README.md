@@ -122,8 +122,11 @@ r restart      s start/stop               d start/stop debug  c clear logs
 ```
 
 `tab` temporarily widens the sidebar to show extra detail (package,
-uptime, build status, arguments, environment) for the selected service,
-without leaving the log-first layout.
+uptime, ports, build status, arguments, environment) for the selected
+service, without leaving the log-first layout. Ports are never
+configured - godev watches the OS for what a running process is
+actually listening on (`:8080`, or `:8080,:9090` for more than one)
+and shows whatever it finds, a few seconds after the process starts.
 
 Editing a `.go` file triggers a debounced rebuild-and-restart, scoped
 to only the hot-reload-enabled services whose build actually depends
@@ -342,10 +345,18 @@ error rather than silently failing.
   (`internal/builder`), and a command-based service gets its argv[0]
   overridden the same way, so `ps`/`top`/`pgrep` show the service name
   (`api`) instead of a cache path or an interpreter's own name.
-- Concurrent `go build` invocations are capped at `GOMAXPROCS` across
-  the whole Supervisor (`buildSem`), so a crash loop or hot-reload
-  correlated across many services can't oversubscribe the CPU by
-  firing one build per service unboundedly.
+- Concurrent service launches (build, when there is one, plus the
+  actual process start) are capped at `GOMAXPROCS` across the whole
+  Supervisor (`buildSem`), so a crash loop or a big `godev run
+  <group>` correlated across many services can't fire unbounded
+  concurrent builds *and* unbounded concurrent process launches on
+  top of that.
+- **Ports** (`internal/ports`): a background poll (every 2s, starting
+  immediately after launch) checks what TCP ports each running
+  process is actually listening on - `/proc` on Linux, `lsof` on
+  macOS, `netstat` on Windows - and shows them in the sidebar detail
+  view and over MCP. Never configured; a process can (and often does)
+  report more than one.
 - **Watch** (`internal/watcher`): recursive `fsnotify` on `*.go`,
   `go.mod`, `go.sum`, debounced (default 200ms) into single rebuild
   batches.

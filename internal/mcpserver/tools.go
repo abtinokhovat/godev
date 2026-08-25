@@ -27,6 +27,10 @@ type ServiceSummary struct {
 	PID   int      `json:"pid,omitempty"`
 	// Uptime is empty unless the service is currently running.
 	Uptime string `json:"uptime,omitempty"`
+	// Ports lists TCP ports observed listening for this service - never
+	// configured, discovered from the OS (see internal/ports); empty
+	// until found, which can take a moment after starting.
+	Ports []int `json:"ports,omitempty"`
 }
 
 func summarize(svc domain.Service, rt domain.ServiceRuntime) ServiceSummary {
@@ -40,6 +44,7 @@ func summarize(svc domain.Service, rt domain.ServiceRuntime) ServiceSummary {
 		Group: svc.Group,
 		State: rt.State.String(),
 		PID:   rt.PID,
+		Ports: rt.Ports,
 	}
 	if rt.State == domain.StateRunning && !rt.StartedAt.IsZero() {
 		s.Uptime = time.Since(rt.StartedAt).Round(time.Second).String()

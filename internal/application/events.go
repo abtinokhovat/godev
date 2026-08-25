@@ -24,6 +24,7 @@ const (
 	EventDebuggerStarted   EventType = "debugger_started"
 	EventDebuggerStopped   EventType = "debugger_stopped"
 	EventDebuggerFailed    EventType = "debugger_failed"
+	EventPortsChanged      EventType = "ports_changed"
 )
 
 // Event is a single notification from the supervisor to any listener
