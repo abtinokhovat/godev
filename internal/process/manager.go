@@ -31,6 +31,13 @@ type StartOptions struct {
 	Dir    string
 	Env    []string // full environment (os.Environ() + overrides already merged)
 	Output chan<- OutputLine
+	// Name, when set, becomes the process's argv[0] instead of Binary's
+	// full path - so `ps`/`top`/Activity Monitor show the service name
+	// (e.g. "api") instead of an unrecognizable cache path
+	// (".cache/godev/<hash>/api/current-normal"). This only relabels
+	// what the OS reports as the command name; Binary is still what
+	// actually gets exec'd.
+	Name string
 }
 
 // Handle represents a running process.
@@ -45,6 +52,9 @@ type Handle struct {
 // can terminate it and any children together (section 51).
 func Start(opts StartOptions) (*Handle, error) {
 	cmd := exec.Command(opts.Binary, opts.Args...)
+	if opts.Name != "" {
+		cmd.Args[0] = opts.Name
+	}
 	cmd.Dir = opts.Dir
 	cmd.Env = opts.Env
 	setProcessGroup(cmd)

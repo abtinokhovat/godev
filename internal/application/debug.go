@@ -49,7 +49,9 @@ func (s *Supervisor) StartDebug(name string) error {
 	}
 
 	s.setState(e, name, domain.StateBuilding)
+	s.buildSem <- struct{}{}
 	res, err := s.builder.Build(e.svc, builder.ModeDebug)
+	<-s.buildSem
 	if err != nil {
 		s.recordBuild(e, builder.Result{Success: false, Output: err.Error()})
 		s.events.Publish(Event{Type: EventDebuggerFailed, Service: name, Err: err})

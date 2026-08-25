@@ -329,7 +329,15 @@ error rather than silently failing.
   directly.
 - **Process** (`internal/process`): each service is its own OS process
   in its own process group (so stopping it also stops its children),
-  started with `os.Environ()` plus service-specific overrides.
+  started with `os.Environ()` plus service-specific overrides. A Go
+  service execs through a same-named symlink to its built binary
+  (`internal/builder`), and a command-based service gets its argv[0]
+  overridden the same way, so `ps`/`top`/`pgrep` show the service name
+  (`api`) instead of a cache path or an interpreter's own name.
+- Concurrent `go build` invocations are capped at `GOMAXPROCS` across
+  the whole Supervisor (`buildSem`), so a crash loop or hot-reload
+  correlated across many services can't oversubscribe the CPU by
+  firing one build per service unboundedly.
 - **Watch** (`internal/watcher`): recursive `fsnotify` on `*.go`,
   `go.mod`, `go.sum`, debounced (default 200ms) into single rebuild
   batches.

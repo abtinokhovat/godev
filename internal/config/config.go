@@ -28,21 +28,21 @@ type File struct {
 // must set Command (and usually Directory), since there is no
 // discoverer to supply them.
 type ServiceConfig struct {
-	Path        string            `yaml:"path"`      // Go import path, e.g. "./cmd/api" - overrides a discovered service's package, or (with no discovered match) defines a brand new buildable Go service on its own. Mutually exclusive with Command.
-	Command     []string          `yaml:"command"`   // explicit run command for a standalone (non-Go) service, e.g. ["node","server.js"]
-	Directory   string            `yaml:"directory"` // working directory for a standalone service; relative paths resolve against the project root
-	Args        []string          `yaml:"args"`
-	Env         map[string]string `yaml:"env"`
-	AutoStart   *bool             `yaml:"auto_start"`
-	AutoRestart *bool             `yaml:"auto_restart"`
-	HotReload   *bool             `yaml:"hot_reload"`
-	Watch       WatchConfig       `yaml:"watch"`
-	Group       []string          `yaml:"group"`
+	Path        string            `yaml:"path,omitempty"`      // Go import path, e.g. "./cmd/api" - overrides a discovered service's package, or (with no discovered match) defines a brand new buildable Go service on its own. Mutually exclusive with Command.
+	Command     []string          `yaml:"command,omitempty"`   // explicit run command for a standalone (non-Go) service, e.g. ["node","server.js"]
+	Directory   string            `yaml:"directory,omitempty"` // working directory for a standalone service; relative paths resolve against the project root
+	Args        []string          `yaml:"args,omitempty"`
+	Env         map[string]string `yaml:"env,omitempty"`
+	AutoStart   *bool             `yaml:"auto_start,omitempty"`
+	AutoRestart *bool             `yaml:"auto_restart,omitempty"`
+	HotReload   *bool             `yaml:"hot_reload,omitempty"`
+	Watch       WatchConfig       `yaml:"watch,omitempty"`
+	Group       []string          `yaml:"group,omitempty"`
 }
 
 type WatchConfig struct {
-	Include []string `yaml:"include"`
-	Exclude []string `yaml:"exclude"`
+	Include []string `yaml:"include,omitempty"`
+	Exclude []string `yaml:"exclude,omitempty"`
 }
 
 // Load reads .godev.yaml from projectRoot. A missing file is not an
