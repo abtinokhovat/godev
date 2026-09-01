@@ -74,6 +74,33 @@ func (m Model) renderLogsContent(width int) []string {
 	return out
 }
 
+// plainLogText renders every currently-scoped log line as plain,
+// unstyled text ("15:04:05 [service] message", or without the
+// [service] tag when already scoped to one service) for clipboard
+// copying - deliberately not renderLogsContent's ANSI-styled output,
+// which would paste raw escape codes into whatever the clipboard
+// lands in. n is how many lines it produced, for the confirmation
+// message.
+func (m Model) plainLogText() (text string, n int) {
+	var b strings.Builder
+	for _, l := range m.logLines {
+		if m.logScope != "" && l.service != m.logScope {
+			continue
+		}
+		if n > 0 {
+			b.WriteByte('\n')
+		}
+		ts := l.time.Format("15:04:05")
+		if m.logScope == "" {
+			fmt.Fprintf(&b, "%s [%s] %s", ts, l.service, l.text)
+		} else {
+			fmt.Fprintf(&b, "%s %s", ts, l.text)
+		}
+		n++
+	}
+	return b.String(), n
+}
+
 func (m Model) renderBuildContent(width int) []string {
 	svc, ok := m.selectedService()
 	if !ok {

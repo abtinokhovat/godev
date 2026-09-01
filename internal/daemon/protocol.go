@@ -81,17 +81,24 @@ func (f eventFrame) toEvent() application.Event {
 // reply directly - the result (success or failure) shows up the normal
 // way, as events and log lines flowing back through the stream, the
 // same as the in-process TUI's own `go m.sup.X(name)` dispatch already
-// works.
+// works. Service is used by the single-service actions; Services by
+// the batch ones (start/stop/restart_services, for a whole group or
+// an ad-hoc set of names typed at the TUI's ":" prompt) - never both
+// on the same frame.
 type actionFrame struct {
-	Action  string // "start" | "stop" | "restart" | "start_debug" | "stop_debug" | "reload"
-	Service string
+	Action   string // "start" | "stop" | "restart" | "start_debug" | "stop_debug" | "reload" | "start_services" | "stop_services" | "restart_services"
+	Service  string
+	Services []string
 }
 
 const (
-	actionStart      = "start"
-	actionStop       = "stop"
-	actionRestart    = "restart"
-	actionStartDebug = "start_debug"
-	actionStopDebug  = "stop_debug"
-	actionReload     = "reload" // Service is unused - reload always re-reads the whole project's .godev.yaml
+	actionStart           = "start"
+	actionStop            = "stop"
+	actionRestart         = "restart"
+	actionStartDebug      = "start_debug"
+	actionStopDebug       = "stop_debug"
+	actionReload          = "reload" // Service is unused - reload always re-reads the whole project's .godev.yaml
+	actionStartServices   = "start_services"
+	actionStopServices    = "stop_services"
+	actionRestartServices = "restart_services"
 )

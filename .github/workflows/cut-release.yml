@@ -1,0 +1,59 @@
+name: Cut Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: "Version bump"
+        required: true
+        type: choice
+        options: [patch, minor, major]
+        default: patch
+
+permissions:
+  contents: write
+
+jobs:
+  cut-release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Determine versions
+        id: version
+        run: |
+          last_tag="$(git tag --list 'v*.*.*' --sort=-v:refname | head -n1)"
+          [ -z "$last_tag" ] && last_tag="v0.0.0"
+          IFS='.' read -r major minor patch <<<"${last_tag#v}"
+          case "${{ inputs.bump }}" in
+            major) major=$((major+1)); minor=0; patch=0 ;;
+            minor) minor=$((minor+1)); patch=0 ;;
+            patch) patch=$((patch+1)) ;;
+          esac
+          new_tag="v${major}.${minor}.${patch}"
+          echo "last_tag=$last_tag" >>"$GITHUB_OUTPUT"
+          echo "new_tag=$new_tag" >>"$GITHUB_OUTPUT"
+
+      - name: Generate changelog
+        run: ./scripts/changelog.sh "${{ steps.version.outputs.last_tag }}" "${{ steps.version.outputs.new_tag }}" >/tmp/section.md
+
+      - name: Update CHANGELOG.md
+        run: |
+          if [ -f CHANGELOG.md ]; then
+            { cat /tmp/section.md; echo; tail -n +2 CHANGELOG.md; } >/tmp/full.md
+          else
+            { echo "# Changelog"; echo; cat /tmp/section.md; } >/tmp/full.md
+          fi
+          mv /tmp/full.md CHANGELOG.md
+
+      - name: Commit and tag
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add CHANGELOG.md
+          git commit -m "chore(release): ${{ steps.version.outputs.new_tag }}"
+          git tag -a "${{ steps.version.outputs.new_tag }}" -m "${{ steps.version.outputs.new_tag }}"
+          git push origin HEAD:${{ github.ref_name }}
+          git push origin "${{ steps.version.outputs.new_tag }}"

@@ -1,11 +1,15 @@
 package tui
 
 import (
+	"fmt"
+	"strings"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/abtinokhovat/godev/internal/application"
+	"github.com/abtinokhovat/godev/internal/domain"
+	"github.com/abtinokhovat/godev/internal/logs"
 )
 
 // buildSettleDelay is how long the Build view stays up after a build
@@ -27,6 +31,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
 		m.scrollSidebarToSelection()
+		m.clampScroll()
 		return m, nil
 
 	case tea.KeyMsg:
@@ -58,6 +63,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	return m, nil
+}
+
+// appendLocalLogLine appends a synthetic, TUI-local system log line -
+// never sent through logs.Manager or seen by anything but this
+// client - for one-off feedback (e.g. "copied N lines to clipboard")
+// that doesn't warrant a whole Supervisor round trip. Tagged with the
+// current log scope so it's visible from wherever the user actually
+// is: the "all services" view when unscoped, or the scoped service's
+// view otherwise.
+func (m *Model) appendLocalLogLine(text string) {
+	m.logLines = append(m.logLines, logLine{service: m.logScope, stream: logs.StreamSystem, time: time.Now(), text: text})
+	if len(m.logLines) > m.maxLogLines {
+		m.logLines = m.logLines[len(m.logLines)-m.maxLogLines:]
+	}
 }
 
 // handleEvent must always keep listening for further events - every
@@ -102,6 +121,9 @@ func (m Model) handleEvent(e eventMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if m.commandMode {
+		return m.handleCommandInputKey(msg)
+	}
 	switch msg.String() {
 	case "q", "ctrl+c":
 		m.quitting = true
@@ -196,6 +218,29 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case "R":
+		if names, ok := m.selectedGroupMembers(); ok {
+			m.sup.RestartServices(names)
+		}
+		return m, nil
+
+	case "S":
+		if names, ok := m.selectedGroupMembers(); ok {
+			anyUp := false
+			for _, n := range names {
+				if rt, ok := m.sup.Runtime(n); ok && isUp(rt) {
+					anyUp = true
+					break
+				}
+			}
+			if anyUp {
+				m.sup.StopServices(names)
+			} else {
+				m.sup.StartServices(names)
+			}
+		}
+		return m, nil
+
 	case "d":
 		if svc, ok := m.selectedService(); ok {
 			rt, _ := m.sup.Runtime(svc.Name)
@@ -216,6 +261,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case "pgup":
 		m.scroll += 10
+		m.clampScroll()
 		return m, nil
 
 	case "pgdown":
@@ -232,40 +278,120 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case "y":
+		if m.view == ViewLogs {
+			text, n := m.plainLogText()
+			osc52Copy(text)
+			m.appendLocalLogLine(fmt.Sprintf("copied %d log line(s) to clipboard", n))
+		}
+		return m, nil
+
 	case "ctrl+r":
 		go m.sup.Reload()
+		return m, nil
+
+	case ":":
+		m.commandMode = true
+		m.commandInput = ""
+		return m, nil
+	}
+	return m, nil
+}
+
+// handleCommandInputKey handles every keypress while the ":" ad-hoc
+// run prompt is open, bypassing handleKey's normal single-key dispatch
+// entirely - typing "s" here must insert the letter, not toggle a
+// service.
+func (m Model) handleCommandInputKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.Type {
+	case tea.KeyEsc:
+		m.commandMode = false
+		m.commandInput = ""
+		return m, nil
+
+	case tea.KeyEnter:
+		m.commandMode = false
+		targets := strings.Fields(m.commandInput)
+		m.commandInput = ""
+		if len(targets) == 0 {
+			return m, nil
+		}
+		resolved, err := domain.ResolveTargets(m.services, targets)
+		if err != nil {
+			m.appendLocalLogLine("run " + strings.Join(targets, " ") + ": " + err.Error())
+			return m, nil
+		}
+		names := make([]string, len(resolved))
+		for i, s := range resolved {
+			names[i] = s.Name
+		}
+		m.sup.StartServices(names)
+		m.appendLocalLogLine("starting " + strings.Join(names, ", "))
+		return m, nil
+
+	case tea.KeyBackspace:
+		if r := []rune(m.commandInput); len(r) > 0 {
+			m.commandInput = string(r[:len(r)-1])
+		}
+		return m, nil
+
+	case tea.KeySpace:
+		m.commandInput += " "
+		return m, nil
+
+	case tea.KeyRunes:
+		m.commandInput += string(msg.Runes)
 		return m, nil
 	}
 	return m, nil
 }
 
 // handleMouse supports the mouse gestures that map cleanly onto
-// existing keyboard actions: the scroll wheel (any direction) moves
-// the content pane the same way pgup/pgdown/left/right do, and a left
+// existing keyboard actions: the scroll wheel moves whichever pane
+// the cursor is currently over - the sidebar if it's over the
+// sidebar's column, the content pane otherwise - the same way
+// pgup/pgdown/left/right (content) or up/down (sidebar) do, and a left
 // click on a sidebar service row selects it and focuses its logs, the
 // same as navigating there with up/down and then pressing enter.
 func (m Model) handleMouse(ev tea.MouseEvent) (tea.Model, tea.Cmd) {
+	overSidebar := ev.X < m.sidebarWidth()
+
 	switch ev.Button {
 	case tea.MouseButtonWheelUp:
-		m.scroll += vWheelStep
+		if overSidebar {
+			m.sidebarScroll--
+			m.clampSidebarScroll()
+		} else {
+			m.scroll += vWheelStep
+			m.clampScroll()
+		}
 		return m, nil
 
 	case tea.MouseButtonWheelDown:
-		m.scroll -= vWheelStep
-		if m.scroll < 0 {
-			m.scroll = 0
+		if overSidebar {
+			m.sidebarScroll++
+			m.clampSidebarScroll()
+		} else {
+			m.scroll -= vWheelStep
+			if m.scroll < 0 {
+				m.scroll = 0
+			}
 		}
 		return m, nil
 
 	case tea.MouseButtonWheelLeft:
-		m.hScroll -= hWheelStep
-		if m.hScroll < 0 {
-			m.hScroll = 0
+		if !overSidebar {
+			m.hScroll -= hWheelStep
+			if m.hScroll < 0 {
+				m.hScroll = 0
+			}
 		}
 		return m, nil
 
 	case tea.MouseButtonWheelRight:
-		m.hScroll += hWheelStep
+		if !overSidebar {
+			m.hScroll += hWheelStep
+		}
 		return m, nil
 
 	case tea.MouseButtonLeft:

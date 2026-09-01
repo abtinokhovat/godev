@@ -139,6 +139,10 @@ func (r *RemoteSource) sendAction(action, service string) error {
 	return r.enc.Encode(frame{Kind: kindAction, Action: &actionFrame{Action: action, Service: service}})
 }
 
+func (r *RemoteSource) sendBatchAction(action string, names []string) {
+	_ = r.enc.Encode(frame{Kind: kindAction, Action: &actionFrame{Action: action, Services: names}})
+}
+
 func (r *RemoteSource) Services() []domain.Service {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -185,6 +189,12 @@ func (r *RemoteSource) Stop(name string) error       { return r.sendAction(actio
 func (r *RemoteSource) Restart(name string) error    { return r.sendAction(actionRestart, name) }
 func (r *RemoteSource) StartDebug(name string) error { return r.sendAction(actionStartDebug, name) }
 func (r *RemoteSource) StopDebug(name string) error  { return r.sendAction(actionStopDebug, name) }
+
+func (r *RemoteSource) StartServices(names []string) { r.sendBatchAction(actionStartServices, names) }
+func (r *RemoteSource) StopServices(names []string)  { r.sendBatchAction(actionStopServices, names) }
+func (r *RemoteSource) RestartServices(names []string) {
+	r.sendBatchAction(actionRestartServices, names)
+}
 
 // Reload asks the detached instance to re-read its .godev.yaml and
 // reconcile - fire-and-forget like every other action; the outcome
