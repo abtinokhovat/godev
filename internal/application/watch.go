@@ -45,9 +45,17 @@ func (s *Supervisor) WatchAndReload(debounceMs int) (func(), error) {
 // module-level change can affect anything, so it's not worth trying
 // to scope). Command-based services never rebuild from Go source
 // changes at all: they have no Go package to depend on anything.
+//
+// The affected services rebuild one at a time, not all at once: a
+// single edit to a widely-shared package can affect a dozen services,
+// and firing a dozen concurrent `go build` invocations would make
+// every one of them slower than doing them one after another - the
+// same reasoning StartAll/StartServices already apply to a bulk
+// start.
 func (s *Supervisor) reloadHotReloadServices(paths []string) {
 	affected, scoped := s.affectedByPaths(paths)
 
+	var names []string
 	for _, name := range s.serviceNames() {
 		e, ok := s.entry(name)
 		if !ok || !e.svc.HotReload || e.svc.IsCommand() {
@@ -64,13 +72,16 @@ func (s *Supervisor) reloadHotReloadServices(paths []string) {
 		if state != domain.StateRunning && state != domain.StateCrashed && state != domain.StateBuildFailed {
 			continue
 		}
-		go func(n string) {
-			s.log(n, logs.StreamSystem, "source changed, reloading...")
-			if err := s.Restart(n); err != nil {
-				s.log(n, logs.StreamSystem, "reload failed: "+err.Error())
-			}
-		}(name)
+		names = append(names, name)
 	}
+	if len(names) == 0 {
+		return
+	}
+
+	go s.runSequentially(names, func(name string) error {
+		s.log(name, logs.StreamSystem, "source changed, reloading...")
+		return s.Restart(name)
+	}, "reload failed")
 }
 
 // affectedByPaths resolves paths to the set of service names whose

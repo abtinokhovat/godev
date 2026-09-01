@@ -54,6 +54,15 @@ type Model struct {
 	logLines    []logLine
 	maxLogLines int
 
+	// commandMode/commandInput back the ":" prompt - typing space-
+	// separated service/group names and pressing enter starts exactly
+	// those (see domain.ResolveTargets), without needing to navigate
+	// the sidebar to each one first. While commandMode is true,
+	// handleKey routes every key to handleCommandInputKey instead of
+	// its normal single-key dispatch.
+	commandMode  bool
+	commandInput string
+
 	// autoBuildView remembers that we switched to the Build view
 	// automatically (because the selected service started building) so
 	// we know to switch back once the build settles, per the "shown
@@ -141,6 +150,31 @@ func (m Model) selectedService() (domain.Service, bool) {
 		return domain.Service{}, false
 	}
 	return m.services[m.selected], true
+}
+
+// selectedGroupMembers returns the names of every service the sidebar
+// lists under the selected service's group header (its primary group,
+// see domain.PrimaryGroups), in m.services order - exactly what a
+// "start/stop/restart this whole group" keybind should act on. An
+// ungrouped selected service has no such header, so it acts alone:
+// the returned slice is just that one service's name.
+func (m Model) selectedGroupMembers() ([]string, bool) {
+	svc, ok := m.selectedService()
+	if !ok {
+		return nil, false
+	}
+	primary := domain.PrimaryGroups(m.services)
+	group := primary[svc.Name]
+	if group == "" {
+		return []string{svc.Name}, true
+	}
+	var names []string
+	for _, s := range m.services {
+		if primary[s.Name] == group {
+			names = append(names, s.Name)
+		}
+	}
+	return names, true
 }
 
 // groupRow is one row of the sidebar's grouped service tree: either a
@@ -291,10 +325,6 @@ func (m Model) sidebarVisibleWindow() (rows []groupRow, start, end int) {
 func (m *Model) scrollSidebarToSelection() {
 	rows := m.groupedRows()
 	maxVisible := m.sidebarMaxVisibleRows()
-	maxStart := len(rows) - maxVisible
-	if maxStart < 0 {
-		maxStart = 0
-	}
 
 	if idx := m.sidebarRowIndex(rows); idx >= 0 {
 		if idx < m.sidebarScroll {
@@ -303,7 +333,23 @@ func (m *Model) scrollSidebarToSelection() {
 			m.sidebarScroll = idx - maxVisible + 1
 		}
 	}
+	m.clampSidebarScroll()
+}
 
+// clampSidebarScroll bounds m.sidebarScroll to the sidebar's actual
+// row count - the tail half of scrollSidebarToSelection's own
+// clamping, factored out so a direct wheel-driven scroll (which,
+// unlike scrollSidebarToSelection, doesn't touch the current
+// selection at all - looking around independently of it is the whole
+// point) can clamp itself the same way without forcing the selection
+// into view.
+func (m *Model) clampSidebarScroll() {
+	rows := m.groupedRows()
+	maxVisible := m.sidebarMaxVisibleRows()
+	maxStart := len(rows) - maxVisible
+	if maxStart < 0 {
+		maxStart = 0
+	}
 	if m.sidebarScroll > maxStart {
 		m.sidebarScroll = maxStart
 	}

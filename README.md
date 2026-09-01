@@ -132,12 +132,35 @@ Keys:
 ```
 ↑↓ select      enter focus service logs   a all logs        tab expand detail
 r restart      s start/stop               d start/stop debug  c clear logs
+R restart group  S start/stop group       y copy logs        : run by name/group
 1-4 views      pgup/pgdn scroll           ctrl+r reload config q quit
 ```
 
+`R`/`S` act on the *whole group* the selected service belongs to (its
+smallest/most-specific one, matching the sidebar's own display rule) -
+`S` starts it if none of its members are running, stops it if any are;
+an ungrouped service just acts on itself. Both restart/start a group
+one member at a time (see below), never all at once.
+
+`:` opens a one-line prompt at the bottom - type any mix of service
+names and group names, space-separated (same syntax as `godev run
+<target>...`), and `enter` starts exactly those, even ones that were
+never selected in the sidebar. `esc` cancels. Useful after `ctrl+r`
+adds a new service you actually want running now, or to bring up a
+whole group without hunting for one of its members first.
+
 Mouse works too: clicking a sidebar service selects it and focuses its
-logs, same as navigating there and pressing `enter`; the scroll wheel
-moves the content pane the same way `pgup`/`pgdn`/`←`/`→` do.
+logs, same as navigating there and pressing `enter`. The scroll wheel
+moves whichever pane the cursor is currently over - the sidebar if
+it's positioned there, the content pane otherwise - the same way
+`pgup`/`pgdn`/`←`/`→` (content) or `↑`/`↓` (sidebar) do; the content
+pane's scroll never goes further back than the earliest line actually
+in the buffer.
+
+`y` copies the current log view (respecting whatever service it's
+scoped to) to the system clipboard via an OSC 52 escape sequence -
+works locally, over SSH, and inside tmux/screen (with clipboard
+passthrough enabled) alike, no OS clipboard API involved.
 
 `ctrl+r` re-reads `.godev.yaml` and reconciles it against what's
 already running, without restarting anything that doesn't need it: a
@@ -164,7 +187,11 @@ change) - editing `pkg/shared/x.go` restarts every service that
 imports it, editing `cmd/api/main.go` restarts only `api`. A `go.mod`/
 `go.sum` change, or a change arriving before the dependency index has
 finished its first (background, non-blocking) computation, falls back
-to restarting everyone, since either could affect anything.
+to restarting everyone, since either could affect anything. When more
+than one service is affected by the same change, they rebuild one at a
+time, not all at once - a widely-shared package can affect a dozen
+services, and firing a dozen concurrent `go build` invocations would
+make every one of them slower than doing them in sequence.
 
 ## Getting started
 

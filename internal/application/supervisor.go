@@ -234,10 +234,47 @@ func (s *Supervisor) StartServices(names []string) {
 // doesn't abort the batch: it's logged and the rest still start, same
 // as before this was made sequential.
 func (s *Supervisor) startSequentially(names []string) {
+	s.runSequentially(names, s.Start, "start failed")
+}
+
+// runSequentially calls op for each name in turn, waiting for one to
+// fully finish (including any build) before calling op on the next -
+// the shared mechanism behind every "do this to several services"
+// entry point (StartAll/StartServices, RestartServices, hot-reload's
+// own rebuild-everyone-affected path) that must never let two of
+// those builds/launches race each other for the CPU. A failure
+// doesn't abort the batch: it's logged via failMsg and the rest still
+// run.
+func (s *Supervisor) runSequentially(names []string, op func(name string) error, failMsg string) {
 	for _, name := range names {
-		if err := s.Start(name); err != nil {
-			s.log(name, logs.StreamSystem, "start failed: "+err.Error())
+		if err := op(name); err != nil {
+			s.log(name, logs.StreamSystem, failMsg+": "+err.Error())
 		}
+	}
+}
+
+// RestartServices restarts exactly the named services, one at a time
+// in the given order - each one's stop-then-rebuild-then-start fully
+// finishes before the next one's even begins, for the same CPU-
+// contention reason StartAll/StartServices are sequential. Used by
+// the TUI's whole-group restart keybind, and reachable the same way
+// over the attach socket.
+func (s *Supervisor) RestartServices(names []string) {
+	go s.runSequentially(names, s.Restart, "restart failed")
+}
+
+// StopServices stops exactly the named services concurrently -
+// unlike starting or restarting, stopping doesn't build anything and
+// has no CPU-contention reason to serialize, so bringing a whole
+// group down happens as fast as each service's own graceful-stop
+// timeout allows, not one after another.
+func (s *Supervisor) StopServices(names []string) {
+	for _, name := range names {
+		go func(n string) {
+			if err := s.Stop(n); err != nil {
+				s.log(n, logs.StreamSystem, "stop failed: "+err.Error())
+			}
+		}(name)
 	}
 }
 

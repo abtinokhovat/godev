@@ -11,6 +11,14 @@ import (
 // writeDepFixture builds a small module on disk: two independent
 // services (api, worker) plus a shared package api alone imports, so
 // tests can tell "affects only api" apart from "affects everyone".
+// Both main()s loop-sleep forever rather than returning immediately -
+// the dep-index tests never actually start these services and don't
+// care, but a test that does (see watch_test.go) needs the process to
+// stay up rather than exit right after launch and register as a
+// spurious crash. `select {}` would "block forever" too, but with
+// only the main goroutine running that's a genuine deadlock, which
+// the Go runtime kills the process for (exit status 2) - not the same
+// thing as staying up.
 func writeDepFixture(t *testing.T) (root string, api, worker domain.Service) {
 	t.Helper()
 	root = t.TempDir()
@@ -26,9 +34,9 @@ func writeDepFixture(t *testing.T) (root string, api, worker domain.Service) {
 	must(os.WriteFile(filepath.Join(root, "go.mod"), []byte("module fixture\n\ngo 1.24\n"), 0o644))
 	must(os.WriteFile(filepath.Join(root, "pkg", "shared", "shared.go"), []byte("package shared\nfunc Do() {}\n"), 0o644))
 	must(os.WriteFile(filepath.Join(root, "cmd", "api", "main.go"),
-		[]byte("package main\nimport \"fixture/pkg/shared\"\nfunc main() { shared.Do() }\n"), 0o644))
+		[]byte("package main\nimport (\n\t\"fixture/pkg/shared\"\n\t\"time\"\n)\nfunc main() { shared.Do(); for { time.Sleep(time.Hour) } }\n"), 0o644))
 	must(os.WriteFile(filepath.Join(root, "cmd", "worker", "main.go"),
-		[]byte("package main\nfunc main() {}\n"), 0o644))
+		[]byte("package main\nimport \"time\"\nfunc main() { for { time.Sleep(time.Hour) } }\n"), 0o644))
 
 	api = domain.Service{Name: "api", Package: "./cmd/api", Directory: filepath.Join(root, "cmd", "api"), HotReload: true}
 	worker = domain.Service{Name: "worker", Package: "./cmd/worker", Directory: filepath.Join(root, "cmd", "worker"), HotReload: true}
