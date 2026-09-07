@@ -122,7 +122,12 @@ func cmdRun(targets []string) int {
 	for i, s := range services {
 		names[i] = s.Name
 	}
-	return runTUI(p, services, filepath.Base(p.Root)+" · "+label, names)
+	// The Supervisor gets every configured service, not just the
+	// resolved subset - otherwise the TUI's ":" prompt could only ever
+	// reach the services named on this command line, defeating its
+	// whole point (starting something you didn't originally target).
+	// Only startNames (below) is actually scoped to what was requested.
+	return runTUI(p, p.Services, filepath.Base(p.Root)+" · "+label, names)
 }
 
 func serviceSource(s domain.Service) string {
