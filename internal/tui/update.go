@@ -54,6 +54,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tickMsg:
 		return m, tickCmd()
 
+	case dragScrollTickMsg:
+		if !m.selecting || m.selDragEdge == 0 || m.view != ViewLogs {
+			return m, nil
+		}
+		m = m.advanceEdgeScroll()
+		return m, dragScrollTick()
+
 	case returnFromBuildMsg:
 		if m.autoBuildView && m.view == ViewBuild && time.Now().After(m.returnAt) {
 			m.view = m.autoReturnView
@@ -347,13 +354,24 @@ func (m Model) handleCommandInputKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 // handleMouse supports the mouse gestures that map cleanly onto
-// existing keyboard actions: the scroll wheel moves whichever pane
-// the cursor is currently over - the sidebar if it's over the
-// sidebar's column, the content pane otherwise - the same way
-// pgup/pgdown/left/right (content) or up/down (sidebar) do, and a left
-// click on a sidebar service row selects it and focuses its logs, the
-// same as navigating there with up/down and then pressing enter.
+// existing keyboard actions - the scroll wheel moves whichever pane
+// the cursor is currently over, and a left click on a sidebar service
+// row selects it and focuses its logs, the same as navigating there
+// with up/down and pressing enter - plus click-and-drag text
+// selection over the log pane (see selection.go). Motion and release
+// are checked before the button switch below, rather than as cases
+// within it, because terminals commonly report a release (and
+// sometimes an in-progress drag's motion) with Button == None rather
+// than the button that's actually held - m.selecting is what actually
+// tracks whether a drag is live, not the event's own button field.
 func (m Model) handleMouse(ev tea.MouseEvent) (tea.Model, tea.Cmd) {
+	if ev.Action == tea.MouseActionMotion && m.selecting {
+		return m.updateDrag(ev.X, ev.Y)
+	}
+	if ev.Action == tea.MouseActionRelease && m.selecting {
+		return m.finishDrag()
+	}
+
 	overSidebar := ev.X < m.sidebarWidth()
 
 	switch ev.Button {
@@ -407,6 +425,13 @@ func (m Model) handleMouse(ev tea.MouseEvent) (tea.Model, tea.Cmd) {
 				m.logScope = svc.Name
 				m.view = ViewLogs
 			}
+			return m, nil
+		}
+		if line, col, ok := m.logsHitTest(ev.X, ev.Y); ok {
+			m.selecting = true
+			m.selDragEdge = 0
+			m.selAnchorLine, m.selAnchorCol = line, col
+			m.selCursorLine, m.selCursorCol = line, col
 		}
 		return m, nil
 	}

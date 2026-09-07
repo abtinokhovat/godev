@@ -100,10 +100,12 @@ R restart group    S start/stop group    m toggle mouse    : run by name/group
   service, not just the ones named on the command line that launched
   this session.
 - Mouse: click a service to focus its logs; wheel scrolls whichever
-  pane the cursor is over. Enabling mouse tracking means the terminal
-  sends clicks/drags to godev instead of handling them itself — press
-  `m` to turn it off when you want to select/copy log text the normal
-  terminal way, `m` again to get the mouse features back.
+  pane the cursor is over; click-and-drag over the log pane selects
+  text and copies it to your clipboard on release, same as a normal
+  terminal — dragging above or below the visible log lines keeps
+  scrolling to reveal more while you hold it there. `m` turns mouse
+  tracking off entirely as a fallback (pure native mouse handling, no
+  godev mouse features at all), `m` again to get them back.
 - `ctrl+r` re-reads `.godev.yaml`: adds new entries, restarts only
   services whose config actually changed, leaves everything else
   running untouched.

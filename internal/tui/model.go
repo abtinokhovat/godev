@@ -64,12 +64,28 @@ type Model struct {
 	commandInput string
 
 	// mouseEnabled tracks whether the terminal is currently reporting
-	// mouse events to us (wheel-scroll-follows-pane, click-to-focus).
-	// While true, the terminal intercepts click-drag instead of letting
-	// it select text natively - "m" toggles this off so the log pane's
-	// text becomes selectable/copiable the normal terminal way, at the
-	// cost of those mouse features until toggled back on.
+	// mouse events to us at all (wheel-scroll-follows-pane,
+	// click-to-focus, and the drag-to-select below all depend on it).
+	// "m" toggles it off as a fallback for terminals where drag-select
+	// doesn't work well, restoring pure native mouse handling at the
+	// cost of every godev mouse feature until toggled back on.
 	mouseEnabled bool
+
+	// Mouse-drag text selection over the log pane (see selection.go).
+	// selecting is true only while a left-button drag is in progress.
+	// selAnchor*/selCursor* are indices into the Logs view's full,
+	// unwindowed content list (scroll-independent, unlike a screen
+	// row) plus a column in that line's plain text, so a selection
+	// stays correct across the edge auto-scroll below. selDragEdge is
+	// nonzero while the drag point sits above (-1) or below (+1) the
+	// visible log rows, driving the repeating auto-scroll tick that
+	// keeps revealing more content as long as it's held there.
+	selecting     bool
+	selDragEdge   int
+	selAnchorLine int
+	selAnchorCol  int
+	selCursorLine int
+	selCursorCol  int
 
 	// autoBuildView remembers that we switched to the Build view
 	// automatically (because the selected service started building) so
