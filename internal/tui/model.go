@@ -63,6 +63,14 @@ type Model struct {
 	commandMode  bool
 	commandInput string
 
+	// mouseEnabled tracks whether the terminal is currently reporting
+	// mouse events to us (wheel-scroll-follows-pane, click-to-focus).
+	// While true, the terminal intercepts click-drag instead of letting
+	// it select text natively - "m" toggles this off so the log pane's
+	// text becomes selectable/copiable the normal terminal way, at the
+	// cost of those mouse features until toggled back on.
+	mouseEnabled bool
+
 	// autoBuildView remembers that we switched to the Build view
 	// automatically (because the selected service started building) so
 	// we know to switch back once the build settles, per the "shown
@@ -94,13 +102,14 @@ func New(sup Source, project string) Model {
 	logsCh, _ := sup.SubscribeLogs(256)
 
 	m := Model{
-		sup:         sup,
-		project:     project,
-		services:    services,
-		runtimes:    runtimes,
-		maxLogLines: 2000,
-		eventsCh:    eventsCh,
-		logsCh:      logsCh,
+		sup:          sup,
+		project:      project,
+		services:     services,
+		runtimes:     runtimes,
+		maxLogLines:  2000,
+		eventsCh:     eventsCh,
+		logsCh:       logsCh,
+		mouseEnabled: true,
 	}
 	// Ungrouped services always render first (see groupedRows), so
 	// index 0 is usually already the top row - but if service 0 happens

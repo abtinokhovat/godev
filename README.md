@@ -88,7 +88,7 @@ than one target.
 ```
 ↑↓ select          enter focus logs      a all logs        tab expand detail
 r restart          s start/stop          d start/stop debug c clear logs
-R restart group    S start/stop group    y copy logs        : run by name/group
+R restart group    S start/stop group    m toggle mouse    : run by name/group
 1-4 switch view    pgup/pgdn/←→ scroll   ctrl+r reload config  q quit
 ```
 
@@ -96,11 +96,14 @@ R restart group    S start/stop group    y copy logs        : run by name/group
   running, else stop/restart all members), one at a time, not
   concurrently.
 - `:` opens a prompt — type service/group names, `enter` starts them
-  without navigating the sidebar first.
+  without navigating the sidebar first. Works with any configured
+  service, not just the ones named on the command line that launched
+  this session.
 - Mouse: click a service to focus its logs; wheel scrolls whichever
-  pane the cursor is over.
-- `y` copies the current log view to your clipboard (OSC 52 — works
-  over SSH/tmux too).
+  pane the cursor is over. Enabling mouse tracking means the terminal
+  sends clicks/drags to godev instead of handling them itself — press
+  `m` to turn it off when you want to select/copy log text the normal
+  terminal way, `m` again to get the mouse features back.
 - `ctrl+r` re-reads `.godev.yaml`: adds new entries, restarts only
   services whose config actually changed, leaves everything else
   running untouched.

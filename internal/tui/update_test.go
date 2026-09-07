@@ -1,7 +1,6 @@
 package tui
 
 import (
-	"strings"
 	"testing"
 	"time"
 
@@ -151,44 +150,26 @@ func TestScrollClampsToContentLengthAndUnwindsImmediately(t *testing.T) {
 	}
 }
 
-func TestCopyLogsKeyAppendsConfirmation(t *testing.T) {
+func TestMouseToggleKeyFlipsStateAndSendsCommand(t *testing.T) {
 	m := groupedTestModel(t)
-	m.view = ViewLogs
-	m.logLines = []logLine{
-		{service: "api", stream: logs.StreamStdout, time: time.Now(), text: "hello"},
-	}
+	m.mouseEnabled = true
 
-	next, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("y")})
+	next, cmd := m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("m")})
 	got := next.(Model)
-
-	if len(got.logLines) != 2 {
-		t.Fatalf("logLines after y = %d, want 2 (original + confirmation)", len(got.logLines))
+	if got.mouseEnabled {
+		t.Fatal("expected mouseEnabled = false after first \"m\"")
 	}
-	last := got.logLines[len(got.logLines)-1]
-	if last.stream != logs.StreamSystem || !strings.Contains(last.text, "copied") {
-		t.Errorf("expected a system confirmation line mentioning \"copied\", got %+v", last)
-	}
-}
-
-func TestPlainLogTextRespectsScope(t *testing.T) {
-	m := groupedTestModel(t)
-	m.logLines = []logLine{
-		{service: "api", stream: logs.StreamStdout, time: time.Now(), text: "api line"},
-		{service: "worker", stream: logs.StreamStdout, time: time.Now(), text: "worker line"},
+	if cmd == nil {
+		t.Fatal("expected a tea.Cmd to disable mouse reporting")
 	}
 
-	text, n := m.plainLogText()
-	if n != 2 || !strings.Contains(text, "[api]") || !strings.Contains(text, "[worker]") {
-		t.Fatalf("unscoped plainLogText = %q (n=%d), want both lines with [service] tags", text, n)
+	next, cmd = got.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("m")})
+	got = next.(Model)
+	if !got.mouseEnabled {
+		t.Fatal("expected mouseEnabled = true after second \"m\"")
 	}
-
-	m.logScope = "worker"
-	text, n = m.plainLogText()
-	if n != 1 || strings.Contains(text, "api line") || !strings.Contains(text, "worker line") {
-		t.Fatalf("scoped plainLogText = %q (n=%d), want only worker's line", text, n)
-	}
-	if strings.Contains(text, "[worker]") {
-		t.Errorf("scoped plainLogText should not repeat the [service] tag, got %q", text)
+	if cmd == nil {
+		t.Fatal("expected a tea.Cmd to re-enable mouse reporting")
 	}
 }
 

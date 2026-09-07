@@ -1,7 +1,6 @@
 package tui
 
 import (
-	"fmt"
 	"strings"
 	"time"
 
@@ -278,13 +277,14 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
-	case "y":
-		if m.view == ViewLogs {
-			text, n := m.plainLogText()
-			osc52Copy(text)
-			m.appendLocalLogLine(fmt.Sprintf("copied %d log line(s) to clipboard", n))
+	case "m":
+		m.mouseEnabled = !m.mouseEnabled
+		if m.mouseEnabled {
+			m.appendLocalLogLine("mouse on (click-to-focus, wheel scroll)")
+			return m, tea.EnableMouseCellMotion
 		}
-		return m, nil
+		m.appendLocalLogLine("mouse off (drag to select/copy text normally)")
+		return m, tea.DisableMouse
 
 	case "ctrl+r":
 		go m.sup.Reload()
