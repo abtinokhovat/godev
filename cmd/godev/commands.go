@@ -329,8 +329,8 @@ func otherGroups(s domain.Service, primary string) string {
 }
 
 // cmdInit is godev's only entry point for discovery: it runs `go
-// list`/JetBrains import once, lets the user pick exactly which
-// results become services (renaming any of them first, if the
+// list` once, lets the user pick exactly which results become
+// services (renaming any of them first, if the
 // auto-derived name isn't the one they want), and writes the result
 // into .godev.yaml with auto_start left off. Every other command only
 // ever reads .godev.yaml - see loadProject - so this is also the only

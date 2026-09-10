@@ -62,9 +62,9 @@ type DiscoveredApp struct {
 // monorepo prevents godev from running at all - so a non-zero exit
 // only becomes a fatal error here when it left nothing usable behind;
 // otherwise the packages that did resolve are still returned, and the
-// caller decides whether an all-or-nothing failure matters (it doesn't
-// when other services - manual or JetBrains-imported - are enough to
-// run on their own).
+// caller decides whether an all-or-nothing failure matters (it
+// doesn't when other, manually-configured services are enough to run
+// on their own).
 func Discover(projectRoot string) ([]DiscoveredApp, error) {
 	cmd := exec.Command("go", "list", "-json", "./...")
 	cmd.Dir = projectRoot

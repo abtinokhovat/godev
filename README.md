@@ -6,10 +6,10 @@ on source changes, restarts crashes with backoff, and attaches Delve
 for VS Code/GoLand — all from one TUI. Non-Go services (frontend dev
 servers, shell scripts, anything) run alongside Go ones the same way.
 
-Config is explicit: `godev init` discovers Go packages and JetBrains
-run configs and writes `.godev.yaml`; every later `godev` run reads
-only that file, so startup is instant regardless of project size and
-nothing runs that you didn't select.
+Config is explicit: `godev init` discovers Go packages and writes
+`.godev.yaml`; every later `godev` run reads only that file, so
+startup is instant regardless of project size and nothing runs that
+you didn't select.
 
 ## Install
 
@@ -45,9 +45,9 @@ godev
 ```
 
 With no `.godev.yaml`, this runs discovery and drops into a checklist
-of every Go `main` package and importable JetBrains run config —
-pick what becomes a service, rename any of them, confirm. From then
-on `godev` just opens the TUI against `.godev.yaml`.
+of every Go `main` package — pick what becomes a service, rename any
+of them, confirm. From then on `godev` just opens the TUI against
+`.godev.yaml`.
 
 ```
 ┌ my-project ──────────────────────────────────── 3 service(s) · 1 running ┐
@@ -141,9 +141,9 @@ under a shared sidebar header and lets `godev run <group>` start them
 together; a service in multiple groups displays under its
 smallest/most-specific one but works with all of them.
 
-Non-Go services and JetBrains imports never run automatically from
-discovery — everything goes through `godev init`'s checklist first,
-written with `auto_start: false`.
+Non-Go services are added by hand-editing `.godev.yaml` — there's no
+discovery for them. Review a command before setting `auto_start: true`
+on it, the same as any command you'd run yourself.
 
 ## Debugging
 
@@ -201,7 +201,7 @@ blank.
 
 | Package | Responsibility |
 |---|---|
-| `internal/discovery`, `internal/discovery/jetbrains` | Go package + JetBrains run-config discovery, `godev init` only |
+| `internal/discovery` | Go package discovery, `godev init` only |
 | `internal/config` | reads/merges `.godev.yaml`, preserves declaration order |
 | `internal/builder` | `go build` into `~/.cache/godev/<project-id>/`, atomic install |
 | `internal/process` | process lifecycle, own process group, argv[0] renamed to service name, PID-based adoption |

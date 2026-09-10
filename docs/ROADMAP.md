@@ -10,11 +10,11 @@ godev discovers and runs Go programs via `go list`, `go build`, and
 `dlv`. Rather than trying to make godev natively understand every
 language, non-Go services (or anything else you want managed alongside
 your Go services) are added through **explicit configuration** - a
-`.godev.yaml` entry or an imported JetBrains run configuration - not
-heuristic scanning. Services can be grouped and run together. On top of
-that, the plan is to expose godev to AI agents via MCP, and eventually
-ship IDE extensions (JetBrains first, then VS Code, then Zed) - the
-lowest priority, useful eventually, not urgent.
+`.godev.yaml` entry - not heuristic scanning. Services can be grouped
+and run together. On top of that, the plan is to expose godev to AI
+agents via MCP, and eventually ship IDE extensions (JetBrains first,
+then VS Code, then Zed) - the lowest priority, useful eventually, not
+urgent.
 
 ## Phase 0/1 — Run configurations + grouping (implemented)
 
@@ -31,16 +31,15 @@ lowest priority, useful eventually, not urgent.
   match a discovered service, builds a brand new standalone service
   from it (`internal/config/config.go`'s `newStandaloneService`).
 - **JetBrains `.run` XML importer** (`internal/discovery/jetbrains`):
-  read-only parsing of `.idea/runConfigurations/*.xml`. Recognizes
-  `GoApplicationRunConfiguration` (enriches a matching discovered Go
-  service, keyed by working directory, with args/env/group - doesn't
-  create a new service), `NodeJSConfigurationType`, `js.build_tools.npm`,
-  and `ShConfigurationType` (each becomes a standalone command-based
-  service). Other types are ignored. Wired into `cmd/godev/setup.go`'s
-  `applyJetBrainsImport`, between discovery and `.godev.yaml` merging.
-- **`Service.Group []string`**: set via `.godev.yaml`'s `group:` field
-  or a JetBrains configuration's `folderName`. The TUI sidebar
-  (`internal/tui/sidebar.go`, `model.go`) renders ungrouped services
+  read-only parsing of `.idea/runConfigurations/*.xml`, enriching a
+  matching discovered Go service with args/env/group or adding a
+  standalone command-based service for Node/npm/shell run configs.
+  **Removed by request.** A manual `.godev.yaml` entry (`command:`)
+  still covers the same non-Go service case by hand; `godev init` now
+  only ever discovers Go packages.
+- **`Service.Group []string`**: set via `.godev.yaml`'s `group:` field.
+  The TUI sidebar (`internal/tui/sidebar.go`, `model.go`) renders
+  ungrouped services
   first (unchanged for projects with no groups), then each group under
   a header, in first-seen order - not sorted, not collapsible (that's
   a possible later refinement, not required for grouping to be useful).
@@ -60,13 +59,6 @@ lowest priority, useful eventually, not urgent.
 
 **Deviations from the original sketch**, made deliberately while
 implementing rather than over-building ahead of need:
-- No formal `Discoverer` interface. `go list` discovery and the
-  JetBrains importer are separate, purpose-built functions called
-  directly from `setup.go` - there's no current need for polymorphism
-  with only two sources, and introducing one prematurely would be
-  speculative abstraction. Worth reconsidering if a third source shows
-  up (a real Discoverer interface would also be the natural seam for
-  it).
 - Group headers aren't collapsible - always-expanded sections. Simpler,
   and grouping is useful without it; collapsibility is a nice-to-have,
   not blocking.
@@ -208,8 +200,9 @@ TUI even opened, and every discovered/imported service defaulted to
 immediately spawned all 57 builds at once - including auto-imported
 JetBrains shell-script run configurations nobody had reviewed.
 
-- **Discovery is init-only.** `discovery.Discover`/`jetbrains.Import`
-  now only ever run inside `godev init` (`cmd/godev/initmenu.go`).
+- **Discovery is init-only.** `discovery.Discover` (JetBrains import
+  ran here too before it was removed) only ever runs inside
+  `godev init` (`cmd/godev/initmenu.go`).
   Every other command (`godev`, `run`, `list`, `mcp`, `--detach`, ...)
   goes through `loadProject` (`cmd/godev/setup.go`), which only reads
   `.godev.yaml` - no `go` invocation, no `.idea/` scan, regardless of
@@ -294,10 +287,8 @@ Still open, bundled here rather than tracked as their own phase:
 ## Explicit non-goals
 
 - No heuristic auto-detection of JS (or any other non-Go) projects —
-  `package.json` script sniffing, entrypoint guessing, etc. Explicit
-  configuration (manual or JetBrains-imported) is the only mechanism.
-- No two-way sync writing back into `.idea/runConfigurations` — the
-  importer is read-only.
+  `package.json` script sniffing, entrypoint guessing, etc. A manual
+  `.godev.yaml` entry is the only mechanism.
 - No bespoke build or debugger integration for any language besides Go
   right now. Other languages get process management through a generic
   run configuration; first-class debugging for them is a deliberately
