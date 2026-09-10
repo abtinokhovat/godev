@@ -23,6 +23,14 @@ type Source interface {
 	SubscribeLogs(buf int) (<-chan logs.Event, func())
 	ClearLogs()
 
+	// RecentLogs returns whatever scrollback the source already has
+	// before the TUI subscribes to the live stream - New() uses it to
+	// seed the log view instead of starting blank, whether that
+	// scrollback came from this same run, a disk-backed replay of a
+	// previous one (see application.Supervisor's seedHistory), or a
+	// detached instance's own history on attach.
+	RecentLogs() []logs.Event
+
 	Start(name string) error
 	Stop(name string) error
 	Restart(name string) error

@@ -168,6 +168,35 @@ Exposes this project's services to an AI agent over
 `restart_service`, `start_debug`/`stop_debug`. Scoped to the project
 root it's started in — safe to run in several projects at once.
 
+## Crash recovery and log persistence
+
+Every running service's PID is recorded to `state.json` under the
+project's cache dir (`~/.cache/godev/<project-id>/`), and every log
+line is persisted to a per-service file there too
+(`logs/<service>.log`, rotating at 10MB). This applies whether you're
+running in the foreground or via `--detach` — there's no separate
+"safe mode" to opt into.
+
+If godev crashes or is killed outright (not a clean `godev kill`),
+the services it was managing keep running — they're each their own
+process group, independent of godev's own lifetime. The next `godev`
+run for that project reads the registry back: a service whose
+recorded PID is still alive, and whose process still looks like the
+one godev started (its argv[0] still matches the service name — PIDs
+get reused by the OS, so liveness alone isn't proof), is adopted
+instead of duplicated or abandoned. Its pre-crash log history is
+restored too, read back from disk. One limitation: an adopted
+service's *live* output usually doesn't resume automatically — its
+original stdout/stderr were pipes to the now-dead instance, which a
+new one can't reconnect to (and many processes get killed by SIGPIPE
+the next time they try to write to a pipe with no reader anyway).
+Restarting an adopted service (`r`, or `R` for its group) gives it a
+fresh pipe and resumes live output normally.
+
+This also means a completely normal, non-crashed `godev` restart
+picks up right where the log view left off, instead of starting
+blank.
+
 ## Architecture
 
 | Package | Responsibility |
@@ -175,9 +204,9 @@ root it's started in — safe to run in several projects at once.
 | `internal/discovery`, `internal/discovery/jetbrains` | Go package + JetBrains run-config discovery, `godev init` only |
 | `internal/config` | reads/merges `.godev.yaml`, preserves declaration order |
 | `internal/builder` | `go build` into `~/.cache/godev/<project-id>/`, atomic install |
-| `internal/process` | process lifecycle, own process group, argv[0] renamed to service name |
+| `internal/process` | process lifecycle, own process group, argv[0] renamed to service name, PID-based adoption |
 | `internal/watcher` | debounced fsnotify on `*.go`/`go.mod`/`go.sum` |
-| `internal/application` | Supervisor — state machine, backoff, hot-reload cascade, concurrency caps |
+| `internal/application` | Supervisor — state machine, backoff, hot-reload cascade, concurrency caps, crash-recovery registry + log persistence |
 | `internal/ports` | polls listening TCP ports per process |
 | `internal/debugger` | launches/manages headless Delve |
 | `internal/daemon` | `--detach`/`attach`/`kill` client-server protocol |

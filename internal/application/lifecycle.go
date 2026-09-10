@@ -135,14 +135,26 @@ func (s *Supervisor) startProcess(e *serviceEntry, name string, command []string
 	e.runtime.BinaryPath = strings.Join(command, " ")
 	e.runtime.StartedAt = time.Now()
 	e.runtime.LastError = ""
+	startedAt := e.runtime.StartedAt
 	s.mu.Unlock()
 
 	s.events.Publish(Event{Type: EventServiceStarted, Service: name, Message: fmt.Sprintf("pid %d", handle.PID)})
 	s.log(name, logs.StreamSystem, fmt.Sprintf("started (pid %d)", handle.PID))
 
+	// monitor must start watching handle.Done() right away: a registry
+	// write here first (real file I/O) can take just long enough for a
+	// Stop() called immediately after Start() to run Stopping->Stopped
+	// to completion before monitor's very first check of the state,
+	// which would see it as already past Stopping rather than in it
+	// and misreport a clean stop as a crash.
 	go s.pumpOutput(name, out)
 	go s.monitor(e, name, handle, gen)
 	go s.pollPorts(e, name, handle.PID, gen, handle.Done())
+
+	// Recorded after the goroutines above are already running, not
+	// before - see adoptRunning, which is what actually reads this
+	// back after a crash.
+	s.reg.set(name, registryEntry{PID: handle.PID, StartedAt: startedAt})
 	return nil
 }
 
@@ -164,7 +176,15 @@ func (s *Supervisor) monitor(e *serviceEntry, name string, handle *process.Handl
 	err := handle.Wait()
 
 	s.mu.Lock()
-	wasStopping := e.runtime.State == domain.StateStopping
+	// Stopped, not just Stopping, also counts as "this was a deliberate
+	// stop": Stop()'s own handle.Stop() and this goroutine's handle.Wait()
+	// both unblock from the same closed channel with no ordering
+	// guarantee between them, so Stop() can already have run all the way
+	// through its own finalizeStopped() call by the time this goroutine
+	// even gets scheduled for the first time - checking only Stopping
+	// would then read the state Stop() already advanced past, and
+	// misreport a clean stop as a crash.
+	wasStopping := e.runtime.State == domain.StateStopping || e.runtime.State == domain.StateStopped
 	stale := e.generation != gen
 	s.mu.Unlock()
 
@@ -191,6 +211,7 @@ func (s *Supervisor) monitor(e *serviceEntry, name string, handle *process.Handl
 	e.runtime.LastError = exitMsg
 	e.runtime.Ports = nil
 	s.mu.Unlock()
+	s.reg.remove(name)
 	s.events.Publish(Event{Type: EventServiceCrashed, Service: name, Message: exitMsg})
 	s.log(name, logs.StreamSystem, "crashed: "+exitMsg)
 
@@ -258,6 +279,7 @@ func (s *Supervisor) finalizeStopped(e *serviceEntry, name string) {
 	e.runtime.PID = 0
 	e.runtime.Ports = nil
 	s.mu.Unlock()
+	s.reg.remove(name)
 	s.events.Publish(Event{Type: EventServiceStopped, Service: name})
 	s.log(name, logs.StreamSystem, "stopped")
 }

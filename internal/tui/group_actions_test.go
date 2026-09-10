@@ -39,13 +39,14 @@ func (f *fakeSource) SubscribeEvents(int) (<-chan application.Event, func()) {
 func (f *fakeSource) SubscribeLogs(int) (<-chan logs.Event, func()) {
 	return make(chan logs.Event), func() {}
 }
-func (f *fakeSource) ClearLogs()              {}
-func (f *fakeSource) Start(string) error      { return nil }
-func (f *fakeSource) Stop(string) error       { return nil }
-func (f *fakeSource) Restart(string) error    { return nil }
-func (f *fakeSource) StartDebug(string) error { return nil }
-func (f *fakeSource) StopDebug(string) error  { return nil }
-func (f *fakeSource) Reload() error           { return nil }
+func (f *fakeSource) ClearLogs()               {}
+func (f *fakeSource) RecentLogs() []logs.Event { return nil }
+func (f *fakeSource) Start(string) error       { return nil }
+func (f *fakeSource) Stop(string) error        { return nil }
+func (f *fakeSource) Restart(string) error     { return nil }
+func (f *fakeSource) StartDebug(string) error  { return nil }
+func (f *fakeSource) StopDebug(string) error   { return nil }
+func (f *fakeSource) Reload() error            { return nil }
 
 func (f *fakeSource) StartServices(names []string)   { f.started = append(f.started, names) }
 func (f *fakeSource) StopServices(names []string)    { f.stopped = append(f.stopped, names) }

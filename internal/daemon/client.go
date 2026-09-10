@@ -28,6 +28,7 @@ type RemoteSource struct {
 	runtimes    map[string]domain.ServiceRuntime
 	buildInfos  map[string]application.BuildInfo
 	watchActive bool
+	recentLogs  []logs.Event
 
 	eventSubs *fanout[application.Event]
 	logSubs   *fanout[logs.Event]
@@ -88,9 +89,12 @@ func (r *RemoteSource) applySnapshot(s snapshot) {
 		r.buildInfos = map[string]application.BuildInfo{}
 	}
 	r.watchActive = s.WatchActive
-	for _, l := range s.RecentLogs {
-		r.logSubs.publish(l)
-	}
+	// Stored for RecentLogs() to hand to a subscriber that asks, not
+	// published here - nothing has called SubscribeLogs yet at this
+	// point (Dial hasn't even returned to the caller that will), so
+	// fanout.publish's no-history, current-subscribers-only delivery
+	// would just silently drop every one of these.
+	r.recentLogs = s.RecentLogs
 }
 
 func (r *RemoteSource) readLoop(dec *json.Decoder) {
@@ -183,6 +187,12 @@ func (r *RemoteSource) SubscribeLogs(buf int) (<-chan logs.Event, func()) {
 // "c" key): it doesn't ask the daemon to clear its buffer, since other
 // attached clients (or a future re-attach) would want it kept.
 func (r *RemoteSource) ClearLogs() {}
+
+func (r *RemoteSource) RecentLogs() []logs.Event {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return append([]logs.Event(nil), r.recentLogs...)
+}
 
 func (r *RemoteSource) Start(name string) error      { return r.sendAction(actionStart, name) }
 func (r *RemoteSource) Stop(name string) error       { return r.sendAction(actionStop, name) }

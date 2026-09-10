@@ -7,6 +7,7 @@ package application
 
 import (
 	"fmt"
+	"path/filepath"
 	"runtime"
 	"sync"
 	"time"
@@ -17,6 +18,12 @@ import (
 	"github.com/abtinokhovat/godev/internal/logs"
 	"github.com/abtinokhovat/godev/internal/process"
 )
+
+// logBufferLines is how much scrollback logs.Manager keeps in memory.
+// Disk (see logstore.go) is the durable, unbounded copy now - this is
+// just a live-view cache, so it can stay modest rather than growing
+// without bound over a long-running session.
+const logBufferLines = 2000
 
 const stopTimeout = 5 * time.Second
 
@@ -59,6 +66,16 @@ type Supervisor struct {
 	logsMgr *logs.Manager
 	events  *EventBus
 
+	// reg records each running service's PID to disk (state.json under
+	// the same per-project cache dir the builder uses), and logWriter
+	// persists every log line to a per-service file there too - together
+	// what let adoptRunning recognize and reclaim processes a crashed
+	// previous instance left running, and seedHistory restore log
+	// history across any restart, crashed or clean.
+	reg       *registry
+	logWriter *logWriter
+	logDir    string
+
 	// buildSem bounds how many `go build` invocations run at once
 	// across every service this Supervisor manages. Without it, a
 	// crash-loop or hot-reload correlated across many services (a
@@ -81,18 +98,28 @@ func NewSupervisor(projectRoot string, services []domain.Service) (*Supervisor, 
 	if err != nil {
 		return nil, fmt.Errorf("initializing builder: %w", err)
 	}
+	logDir := filepath.Join(b.CacheDir, "logs")
+	lw := newLogWriter(logDir)
+	logsMgr := logs.NewManager(logBufferLines)
+	logsMgr.SetSink(lw.write)
+
 	s := &Supervisor{
 		ProjectRoot: projectRoot,
 		entries:     make(map[string]*serviceEntry, len(services)),
 		builder:     b,
-		logsMgr:     logs.NewManager(5000),
+		logsMgr:     logsMgr,
 		events:      NewEventBus(),
 		buildSem:    make(chan struct{}, runtime.GOMAXPROCS(0)),
 		deps:        newDepIndex(),
+		reg:         newRegistry(filepath.Join(b.CacheDir, "state.json")),
+		logWriter:   lw,
+		logDir:      logDir,
 	}
 	for _, svc := range services {
 		s.addService(svc)
 	}
+	s.seedHistory()
+	s.adoptRunning()
 	return s, nil
 }
 
@@ -115,6 +142,15 @@ func (s *Supervisor) SubscribeLogs(buf int) (<-chan logs.Event, func()) {
 
 func (s *Supervisor) ClearLogs() {
 	s.logsMgr.Clear()
+}
+
+// RecentLogs returns whatever scrollback is already buffered -
+// including, at startup, anything seedHistory restored from disk -
+// for a new subscriber (the TUI's own New(), or a freshly-connected
+// attach client via Server.buildSnapshot) to seed its view with
+// before any live event has actually happened yet this run.
+func (s *Supervisor) RecentLogs() []logs.Event {
+	return s.logsMgr.Snapshot("")
 }
 
 // Services returns the static config for every known service, in
@@ -291,4 +327,5 @@ func (s *Supervisor) Shutdown() {
 		}(name)
 	}
 	wg.Wait()
+	s.logWriter.closeAll()
 }

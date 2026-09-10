@@ -127,6 +127,16 @@ func New(sup Source, project string) Model {
 		logsCh:       logsCh,
 		mouseEnabled: true,
 	}
+	// Seed with whatever scrollback the source already has - a
+	// disk-backed replay of a previous run (see application.Supervisor's
+	// seedHistory), or a detached instance's own history on attach -
+	// rather than starting the log view blank every time.
+	for _, e := range sup.RecentLogs() {
+		m.logLines = append(m.logLines, logLine{service: e.Service, stream: e.Stream, time: e.Time, text: e.Message})
+	}
+	if len(m.logLines) > m.maxLogLines {
+		m.logLines = m.logLines[len(m.logLines)-m.maxLogLines:]
+	}
 	// Ungrouped services always render first (see groupedRows), so
 	// index 0 is usually already the top row - but if service 0 happens
 	// to belong to a group, start the selection on whatever the sidebar
