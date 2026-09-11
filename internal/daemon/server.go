@@ -119,7 +119,18 @@ func (s *Server) handleConn(conn net.Conn) {
 	enc := json.NewEncoder(conn)
 	dec := json.NewDecoder(conn)
 
-	if err := enc.Encode(frame{Kind: kindSnapshot, Snapshot: s.buildSnapshot()}); err != nil {
+	// encMu serializes every Encode call on this connection: the writer
+	// goroutine below streams events/logs while the read loop can now
+	// also reply directly (service-logs requests), and json.Encoder
+	// isn't safe for concurrent use from two goroutines.
+	var encMu sync.Mutex
+	encode := func(f frame) error {
+		encMu.Lock()
+		defer encMu.Unlock()
+		return enc.Encode(f)
+	}
+
+	if err := encode(frame{Kind: kindSnapshot, Snapshot: s.buildSnapshot()}); err != nil {
 		return
 	}
 
@@ -141,7 +152,7 @@ func (s *Server) handleConn(conn net.Conn) {
 				}
 				rt, hasRuntime := s.sup.Runtime(e.Service)
 				ef := toEventFrame(e, rt, hasRuntime)
-				if err := enc.Encode(frame{Kind: kindEvent, Event: &ef}); err != nil {
+				if err := encode(frame{Kind: kindEvent, Event: &ef}); err != nil {
 					closeConn()
 					return
 				}
@@ -149,7 +160,7 @@ func (s *Server) handleConn(conn net.Conn) {
 				if !ok {
 					return
 				}
-				if err := enc.Encode(frame{Kind: kindLog, Log: &l}); err != nil {
+				if err := encode(frame{Kind: kindLog, Log: &l}); err != nil {
 					closeConn()
 					return
 				}
@@ -166,6 +177,14 @@ func (s *Server) handleConn(conn net.Conn) {
 		case kindAction:
 			if f.Action != nil {
 				s.dispatchAction(*f.Action)
+			}
+		case kindServiceLogsReq:
+			if f.ServiceLogsReq != nil {
+				req := *f.ServiceLogsReq
+				go func() {
+					resp := serviceLogsResponse{ID: req.ID, Logs: s.sup.ServiceLogs(req.Service)}
+					encode(frame{Kind: kindServiceLogsResp, ServiceLogsResp: &resp})
+				}()
 			}
 		case kindShutdown:
 			s.requestShutdown()

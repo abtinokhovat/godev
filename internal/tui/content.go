@@ -47,11 +47,12 @@ func (m Model) contentTitle() string {
 
 func (m Model) renderLogsContent(width int) []string {
 	primary := domain.PrimaryGroups(m.services)
+	lines := m.logLines
+	if m.logScope != "" {
+		lines = m.scopedLogLines
+	}
 	var out []string
-	for _, l := range m.logLines {
-		if m.logScope != "" && l.service != m.logScope {
-			continue
-		}
+	for _, l := range lines {
 		ts := styleTimestamp.Render(l.time.Format("15:04:05"))
 		text := l.text
 		switch l.stream {

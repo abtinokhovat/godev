@@ -43,11 +43,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleEvent(msg)
 
 	case logMsg:
-		m.logLines = append(m.logLines, logLine{
-			service: msg.Service, stream: msg.Stream, time: msg.Time, text: msg.Message,
-		})
+		line := logLine{service: msg.Service, stream: msg.Stream, time: msg.Time, text: msg.Message}
+		m.logLines = append(m.logLines, line)
 		if len(m.logLines) > m.maxLogLines {
 			m.logLines = m.logLines[len(m.logLines)-m.maxLogLines:]
+		}
+		// Also tail into the scoped buffer when it's live for this
+		// service - setLogScope fetched its history on entry, this is
+		// what keeps that view current afterward without re-fetching.
+		if m.logScope != "" && msg.Service == m.logScope {
+			m.scopedLogLines = append(m.scopedLogLines, line)
 		}
 		return m, listenLogs(m.logsCh)
 
@@ -79,9 +84,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 // is: the "all services" view when unscoped, or the scoped service's
 // view otherwise.
 func (m *Model) appendLocalLogLine(text string) {
-	m.logLines = append(m.logLines, logLine{service: m.logScope, stream: logs.StreamSystem, time: time.Now(), text: text})
+	line := logLine{service: m.logScope, stream: logs.StreamSystem, time: time.Now(), text: text}
+	m.logLines = append(m.logLines, line)
 	if len(m.logLines) > m.maxLogLines {
 		m.logLines = m.logLines[len(m.logLines)-m.maxLogLines:]
+	}
+	if m.logScope != "" {
+		m.scopedLogLines = append(m.scopedLogLines, line)
 	}
 }
 
@@ -155,7 +164,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case "enter":
 		if svc, ok := m.selectedService(); ok {
-			m.logScope = svc.Name
+			m.setLogScope(svc.Name)
 			m.view = ViewLogs
 			m.scroll = 0
 			m.hScroll = 0
@@ -163,7 +172,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case "a", "esc":
-		m.logScope = ""
+		m.clearLogScope()
 		m.view = ViewLogs
 		m.scroll = 0
 		m.hScroll = 0
@@ -281,6 +290,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.view == ViewLogs {
 			m.sup.ClearLogs()
 			m.logLines = nil
+			m.scopedLogLines = nil
 		}
 		return m, nil
 
@@ -413,7 +423,7 @@ func (m Model) handleMouse(ev tea.MouseEvent) (tea.Model, tea.Cmd) {
 			m.hScroll = 0
 			m.scrollSidebarToSelection()
 			if svc, ok := m.selectedService(); ok {
-				m.logScope = svc.Name
+				m.setLogScope(svc.Name)
 				m.view = ViewLogs
 			}
 			return m, nil

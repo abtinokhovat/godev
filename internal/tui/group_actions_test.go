@@ -22,6 +22,11 @@ type fakeSource struct {
 	started   [][]string
 	stopped   [][]string
 	restarted [][]string
+
+	// serviceLogs is ServiceLogs' canned response per service name -
+	// what a test uses to simulate history the shared live buffer
+	// doesn't have (already evicted, or only ever on disk).
+	serviceLogs map[string][]logs.Event
 }
 
 func (f *fakeSource) Services() []domain.Service { return f.services }
@@ -39,14 +44,15 @@ func (f *fakeSource) SubscribeEvents(int) (<-chan application.Event, func()) {
 func (f *fakeSource) SubscribeLogs(int) (<-chan logs.Event, func()) {
 	return make(chan logs.Event), func() {}
 }
-func (f *fakeSource) ClearLogs()               {}
-func (f *fakeSource) RecentLogs() []logs.Event { return nil }
-func (f *fakeSource) Start(string) error       { return nil }
-func (f *fakeSource) Stop(string) error        { return nil }
-func (f *fakeSource) Restart(string) error     { return nil }
-func (f *fakeSource) StartDebug(string) error  { return nil }
-func (f *fakeSource) StopDebug(string) error   { return nil }
-func (f *fakeSource) Reload() error            { return nil }
+func (f *fakeSource) ClearLogs()                           {}
+func (f *fakeSource) RecentLogs() []logs.Event             { return nil }
+func (f *fakeSource) ServiceLogs(name string) []logs.Event { return f.serviceLogs[name] }
+func (f *fakeSource) Start(string) error                   { return nil }
+func (f *fakeSource) Stop(string) error                    { return nil }
+func (f *fakeSource) Restart(string) error                 { return nil }
+func (f *fakeSource) StartDebug(string) error              { return nil }
+func (f *fakeSource) StopDebug(string) error               { return nil }
+func (f *fakeSource) Reload() error                        { return nil }
 
 func (f *fakeSource) StartServices(names []string)   { f.started = append(f.started, names) }
 func (f *fakeSource) StopServices(names []string)    { f.stopped = append(f.stopped, names) }

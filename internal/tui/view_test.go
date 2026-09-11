@@ -71,6 +71,15 @@ func TestViewLogsScopedToSelectedService(t *testing.T) {
 	m.width, m.height = 100, 30
 	m.view = ViewLogs
 	m.logScope = "worker"
+	// The scoped view renders from scopedLogLines (see setLogScope),
+	// not logLines - populate it directly here rather than through a
+	// real Source round trip, since this test is only exercising
+	// content.go's rendering/filtering, not the fetch itself.
+	for _, l := range m.logLines {
+		if l.service == "worker" {
+			m.scopedLogLines = append(m.scopedLogLines, l)
+		}
+	}
 
 	out := m.View()
 	if !strings.Contains(out, "job failed") {

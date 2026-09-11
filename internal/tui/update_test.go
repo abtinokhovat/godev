@@ -6,6 +6,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/abtinokhovat/godev/internal/domain"
 	"github.com/abtinokhovat/godev/internal/logs"
 )
 
@@ -147,6 +148,51 @@ func TestScrollClampsToContentLengthAndUnwindsImmediately(t *testing.T) {
 	got := next.(Model)
 	if want := max - vWheelStep; got.scroll != want {
 		t.Fatalf("scroll after one wheel down from the clamped top = %d, want %d (should respond immediately, not unwind an invisible overshoot)", got.scroll, want)
+	}
+}
+
+// TestEnterFetchesScopedHistoryFromSource guards the actual bug
+// report: entering a service's log view used to just filter whatever
+// was left in the shared, globally-capped logLines buffer, so a quiet
+// service a noisier one had evicted showed an empty page. setLogScope
+// now fetches that service's full history from the Source instead.
+func TestEnterFetchesScopedHistoryFromSource(t *testing.T) {
+	src := &fakeSource{
+		services: []domain.Service{{Name: "scheduler"}, {Name: "api", Group: []string{"core"}}, {Name: "worker", Group: []string{"core"}}},
+		runtimes: map[string]domain.ServiceRuntime{},
+		serviceLogs: map[string][]logs.Event{
+			"worker": {
+				{Service: "worker", Message: "line evicted from the shared buffer long ago"},
+			},
+		},
+	}
+	m := New(src, "proj")
+	m.selected = 2 // worker
+
+	next, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
+	got := next.(Model)
+
+	if got.logScope != "worker" {
+		t.Fatalf("logScope = %q, want worker", got.logScope)
+	}
+	if len(got.scopedLogLines) != 1 || got.scopedLogLines[0].text != "line evicted from the shared buffer long ago" {
+		t.Fatalf("scopedLogLines = %+v, want the one line fetched from the Source", got.scopedLogLines)
+	}
+
+	// A live line for the scoped service should tail into
+	// scopedLogLines too, not just logLines - otherwise the scoped view
+	// would only ever show the snapshot taken at entry time.
+	next, _ = got.Update(logMsg{Service: "worker", Message: "fresh live line"})
+	got = next.(Model)
+	if len(got.scopedLogLines) != 2 || got.scopedLogLines[1].text != "fresh live line" {
+		t.Fatalf("scopedLogLines after live event = %+v, want the fetched line plus the new live one", got.scopedLogLines)
+	}
+
+	// A live line for a different service must not leak into this scope.
+	next, _ = got.Update(logMsg{Service: "api", Message: "not for worker"})
+	got = next.(Model)
+	if len(got.scopedLogLines) != 2 {
+		t.Fatalf("scopedLogLines after unrelated service's event = %+v, want unchanged", got.scopedLogLines)
 	}
 }
 

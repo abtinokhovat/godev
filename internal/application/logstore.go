@@ -11,18 +11,19 @@ import (
 	"github.com/abtinokhovat/godev/internal/logs"
 )
 
-// logFileMaxBytes is where a service's on-disk log rotates to a
-// single backup (<service>.log.1) - big enough to hold a lot of real
-// history, small enough that a service running for days doesn't grow
-// its log file without bound.
-const logFileMaxBytes = 10 * 1024 * 1024
-
 // seedLinesPerService caps how much of each service's prior-run log
 // gets loaded back into memory at startup (see seedHistory) - enough
 // to feel like nothing was lost, without one chatty service's huge
 // log file crowding out every other service's history in the shared
 // in-memory buffer it all lands in afterward.
 const seedLinesPerService = 1000
+
+// serviceScopeBacklog caps how many lines Supervisor.ServiceLogs reads
+// back off disk for a single service - generous, since a service's
+// log file is no longer rotated away mid-run (see reset), just bounded
+// enough that a service which has logged for days doesn't make
+// switching to it in the TUI read an unbounded file.
+const serviceScopeBacklog = 20000
 
 // logWriterQueue is how many events logWriter will buffer ahead of the
 // disk while its background goroutine catches up - generous enough
@@ -54,9 +55,13 @@ const logWriterQueue = 4096
 //
 // This is what makes log history survive a godev crash - a real file
 // keeps growing untouched even if the process reading it dies, unlike
-// the in-memory buffer or a pipe. Best-effort throughout: a
-// filesystem problem here should never take down log delivery to the
-// TUI, which still works via logs.Manager's in-memory path regardless.
+// the in-memory buffer or a pipe. A service's file is never rotated or
+// trimmed while it's running, however long that is or however much it
+// logs - only a deliberate Stop (see reset) clears it, so mid-run
+// history search is never missing something that "aged out". Best-
+// effort throughout: a filesystem problem here should never take down
+// log delivery to the TUI, which still works via logs.Manager's
+// in-memory path regardless.
 type logWriter struct {
 	dir   string
 	queue chan logs.Event
@@ -126,23 +131,10 @@ func (w *logWriter) persist(e logs.Event) {
 }
 
 func (w *logWriter) fileLocked(service string) (*os.File, error) {
-	path := logFilePath(w.dir, service)
 	if f, ok := w.files[service]; ok {
-		if fi, err := f.Stat(); err != nil || fi.Size() <= logFileMaxBytes {
-			return f, nil
-		}
-		f.Close()
-		delete(w.files, service)
-		os.Rename(path, path+".1")
-	} else if fi, err := os.Stat(path); err == nil && fi.Size() > logFileMaxBytes {
-		// Not yet opened by this instance at all (its first write since
-		// this Supervisor started, or right after adopting a process
-		// left running by a previous one) but already oversized on disk
-		// - rotate before ever touching it, not just on a later write
-		// once it's grown past the limit again under this instance's
-		// own tracking.
-		os.Rename(path, path+".1")
+		return f, nil
 	}
+	path := logFilePath(w.dir, service)
 	if err := os.MkdirAll(w.dir, 0o755); err != nil {
 		return nil, err
 	}
@@ -152,6 +144,28 @@ func (w *logWriter) fileLocked(service string) (*os.File, error) {
 	}
 	w.files[service] = f
 	return f, nil
+}
+
+// reset closes and removes a service's on-disk log file. Called only
+// when a service is deliberately stopped (see Supervisor.Stop) - never
+// on crash, where the log up to the moment it died is exactly what
+// crash recovery needs and must survive untouched. This is the
+// "prune" half of the durability story: a file grows without bound
+// for as long as a service runs (see fileLocked), and only goes away
+// once that run is over, so a later start of the same service begins
+// a clean file instead of one that keeps accumulating across unrelated
+// runs forever.
+func (w *logWriter) reset(service string) {
+	if w.dir == "" || service == "" {
+		return
+	}
+	w.mu.Lock()
+	if f, ok := w.files[service]; ok {
+		f.Close()
+		delete(w.files, service)
+	}
+	w.mu.Unlock()
+	os.Remove(logFilePath(w.dir, service))
 }
 
 // closeAll closes every open per-service file - called from
@@ -169,11 +183,9 @@ func (w *logWriter) closeAll() {
 	}
 }
 
-// readTail returns up to n events from the tail of service's current
-// log file - not its rotated .log.1 backup, which exists purely as a
-// just-in-case archive, not part of the live seeding/tailing path.
-// Best-effort: a missing file or unparseable line yields whatever
-// could be read, never an error the caller needs to handle.
+// readTail returns up to n events from the tail of service's on-disk
+// log file. Best-effort: a missing file or unparseable line yields
+// whatever could be read, never an error the caller needs to handle.
 func readTail(dir, service string, n int) []logs.Event {
 	f, err := os.Open(logFilePath(dir, service))
 	if err != nil {
@@ -195,6 +207,32 @@ func readTail(dir, service string, n int) []logs.Event {
 	for _, line := range lines {
 		var e logs.Event
 		if json.Unmarshal([]byte(line), &e) == nil {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
+// mergeServiceHistory combines a service's on-disk tail with its
+// in-memory scrollback into one chronological list, for
+// Supervisor.ServiceLogs. The two overlap rather than concatenate
+// cleanly: every event lands in both eventually (the disk writer is
+// Manager's sink, called synchronously in Publish order), but the
+// async disk drain can lag behind what's already visible in memory.
+// Taking disk as the base and appending only the in-memory events
+// strictly newer than disk's last timestamp avoids double-counting
+// that overlap without needing to dedupe event-by-event.
+func mergeServiceHistory(disk, live []logs.Event) []logs.Event {
+	if len(disk) == 0 {
+		return live
+	}
+	if len(live) == 0 {
+		return disk
+	}
+	cutoff := disk[len(disk)-1].Time
+	out := append([]logs.Event{}, disk...)
+	for _, e := range live {
+		if e.Time.After(cutoff) {
 			out = append(out, e)
 		}
 	}

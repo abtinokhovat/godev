@@ -5,12 +5,31 @@ import (
 	"os"
 	"os/exec"
 	"runtime"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/abtinokhovat/godev/internal/domain"
+	"github.com/abtinokhovat/godev/internal/logs"
 )
+
+// waitForLogFile polls a service's on-disk log until at least one
+// event has landed - the writer's persist happens on an async
+// background goroutine (see logWriter), so a test can't assume it's
+// already there the instant Start/a crash returns.
+func waitForLogFile(t *testing.T, dir, service string) []logs.Event {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if got := readTail(dir, service, 10); len(got) > 0 {
+			return got
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("service %q log file never appeared on disk", service)
+	return nil
+}
 
 func waitForState(t *testing.T, s *Supervisor, name string, want domain.State, timeout time.Duration) domain.ServiceRuntime {
 	t.Helper()
@@ -257,6 +276,74 @@ func TestStopDuringCrashRestartBackoffAbortsRestart(t *testing.T) {
 	if rt.State != domain.StateStopped {
 		t.Fatalf("state = %s, want STOPPED (crash-restart should have aborted after Stop)", rt.State)
 	}
+}
+
+// TestStopPrunesLogFileButCrashPreservesIt guards the "prune on
+// shutdown, but never mid-run or on crash" design: a deliberately
+// stopped service's pre-stop log history should be gone (see
+// logWriter.reset) so its next run starts clean, while a crash must
+// leave the pre-crash log on disk untouched - that's exactly what
+// crash recovery needs. Stop()'s own "stopping.../stopped" bookkeeping
+// lines are free to land in a freshly recreated file right after the
+// prune (finalizeStopped logs "stopped" after reset runs) - it's the
+// old run's content that must not survive, not the file itself.
+func TestStopPrunesLogFileButCrashPreservesIt(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("test uses /bin/sh")
+	}
+
+	t.Run("deliberate stop prunes the file", func(t *testing.T) {
+		svc := domain.Service{
+			Name:      "web",
+			Command:   []string{"/bin/sh", "-c", "echo hello-from-before-stop; sleep 30"},
+			Directory: t.TempDir(),
+		}
+		sup, err := NewSupervisor(t.TempDir(), []domain.Service{svc})
+		if err != nil {
+			t.Fatalf("NewSupervisor: %v", err)
+		}
+		t.Cleanup(sup.Shutdown)
+
+		if err := sup.Start("web"); err != nil {
+			t.Fatalf("Start: %v", err)
+		}
+		waitForState(t, sup, "web", domain.StateRunning, 2*time.Second)
+		waitForLogFile(t, sup.logDir, "web")
+
+		if err := sup.Stop("web"); err != nil {
+			t.Fatalf("Stop: %v", err)
+		}
+		waitForState(t, sup, "web", domain.StateStopped, 2*time.Second)
+		time.Sleep(100 * time.Millisecond) // let the async writer settle
+
+		for _, e := range readTail(sup.logDir, "web", 50) {
+			if strings.Contains(e.Message, "hello-from-before-stop") {
+				t.Fatalf("pre-stop log content survived the prune: %+v", e)
+			}
+		}
+	})
+
+	t.Run("crash preserves the file", func(t *testing.T) {
+		svc := domain.Service{
+			Name:      "web",
+			Command:   []string{"/bin/sh", "-c", "echo hello; exit 1"},
+			Directory: t.TempDir(),
+		}
+		sup, err := NewSupervisor(t.TempDir(), []domain.Service{svc})
+		if err != nil {
+			t.Fatalf("NewSupervisor: %v", err)
+		}
+		t.Cleanup(sup.Shutdown)
+
+		if err := sup.Start("web"); err != nil {
+			t.Fatalf("Start: %v", err)
+		}
+		waitForState(t, sup, "web", domain.StateCrashed, 2*time.Second)
+
+		if got := waitForLogFile(t, sup.logDir, "web"); len(got) == 0 {
+			t.Fatal("crash should leave the pre-crash log on disk")
+		}
+	})
 }
 
 func TestStartDebugRejectsCommandBasedService(t *testing.T) {

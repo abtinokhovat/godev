@@ -287,6 +287,10 @@ func (s *Supervisor) finalizeStopped(e *serviceEntry, name string) {
 // Stop gracefully stops a running service. When it returns, the
 // service's state is guaranteed to already be Stopped (see
 // finalizeStopped) - callers never need to poll for that themselves.
+// A deliberate Stop is also what prunes the service's on-disk log file
+// (see logWriter.reset) - the run just ended, by request, so its
+// history no longer needs to survive for crash recovery, unlike a
+// crash (handled entirely in monitor(), which never calls Stop).
 func (s *Supervisor) Stop(name string) error {
 	e, ok := s.entry(name)
 	if !ok {
@@ -298,9 +302,10 @@ func (s *Supervisor) Stop(name string) error {
 	s.mu.Lock()
 	handle := e.handle
 	live := e.runtime.State == domain.StateRunning
+	alreadyStopped := e.runtime.State == domain.StateStopped
 	if live {
 		e.runtime.State = domain.StateStopping
-	} else if e.runtime.State != domain.StateStopped {
+	} else if !alreadyStopped {
 		// No live process to signal (crashed, build-failed, never
 		// started, etc). This also opLock-serializes against
 		// crashRestart(), which re-checks state == Crashed after its
@@ -312,6 +317,9 @@ func (s *Supervisor) Stop(name string) error {
 	s.mu.Unlock()
 
 	if !live {
+		if !alreadyStopped {
+			s.logWriter.reset(name)
+		}
 		return nil
 	}
 
@@ -320,8 +328,10 @@ func (s *Supervisor) Stop(name string) error {
 	handle.Stop(stopTimeout)
 	// handle.Stop() only returns once the process is confirmed dead (it
 	// always blocks on the process's exit, escalating to SIGKILL past
-	// the timeout), so it's safe to finalize here rather than leaving it
-	// entirely to monitor() racing on the same handle.
+	// the timeout), so the "stopping..." line above is already flushed
+	// to disk by now - safe to prune before the final "stopped" message
+	// below recreates the file fresh with just that one line in it.
+	s.logWriter.reset(name)
 	s.finalizeStopped(e, name)
 	return nil
 }

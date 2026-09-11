@@ -64,38 +64,67 @@ func TestReadTailOnMissingFileReturnsNil(t *testing.T) {
 	}
 }
 
-func TestLogWriterRotatesAtSizeLimit(t *testing.T) {
+// TestLogWriterNeverRotatesMidRun guards the actual bug report: a
+// service's log used to get rotated away at a fixed byte size even
+// while it kept running, silently truncating history a user might
+// still be searching through. A file just has to keep growing,
+// however big it gets, for as long as the service is up - see reset
+// for the only thing that's now allowed to clear it.
+func TestLogWriterNeverRotatesMidRun(t *testing.T) {
 	dir := t.TempDir()
 	w := newLogWriter(dir)
 
-	// Force a small effective limit by writing more than
-	// logFileMaxBytes worth of content isn't practical in a fast unit
-	// test, so instead this pre-creates an oversized file and confirms
-	// the very next write triggers rotation rather than growing it
-	// further - the same check fileLocked does internally.
 	path := logFilePath(dir, "api")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
 	}
-	oversized := strings.Repeat("x", logFileMaxBytes+1)
+	oversized := strings.Repeat("x", 64*1024) + "\n"
 	if err := os.WriteFile(path, []byte(oversized), 0o644); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
 
-	w.write(logs.Event{Time: time.Now(), Service: "api", Stream: logs.StreamStdout, Message: "after rotation"})
+	w.write(logs.Event{Time: time.Now(), Service: "api", Stream: logs.StreamStdout, Message: "still running"})
 	drainSettle()
 
-	backup, err := os.ReadFile(path + ".1")
-	if err != nil {
-		t.Fatalf("expected a .1 backup after rotation, ReadFile: %v", err)
+	if _, err := os.Stat(path + ".1"); !os.IsNotExist(err) {
+		t.Fatalf("a .1 backup should never be created (rotation is gone), stat err = %v", err)
 	}
-	if len(backup) != len(oversized) {
-		t.Errorf("backup file size = %d, want the original oversized content (%d)", len(backup), len(oversized))
+	got := readTail(dir, "api", 10)
+	if len(got) != 1 || got[0].Message != "still running" {
+		t.Fatalf("readTail = %+v, want just the one new line appended after the pre-existing content", got)
+	}
+}
+
+// TestLogWriterResetClearsFile guards the "prune on stop" half: a
+// deliberately stopped service's file should be gone, so its next run
+// starts clean instead of accumulating across unrelated runs forever.
+func TestLogWriterResetClearsFile(t *testing.T) {
+	dir := t.TempDir()
+	w := newLogWriter(dir)
+
+	w.write(logs.Event{Time: time.Now(), Service: "api", Stream: logs.StreamStdout, Message: "hello"})
+	drainSettle()
+
+	if got := readTail(dir, "api", 10); len(got) != 1 {
+		t.Fatalf("precondition failed: readTail = %+v, want 1 event before reset", got)
 	}
 
-	got := readTail(dir, "api", 10)
-	if len(got) != 1 || got[0].Message != "after rotation" {
-		t.Fatalf("readTail after rotation = %+v, want just the new line", got)
+	w.reset("api")
+
+	if _, err := os.Stat(logFilePath(dir, "api")); !os.IsNotExist(err) {
+		t.Fatalf("log file should be removed after reset, stat err = %v", err)
+	}
+	if got := readTail(dir, "api", 10); len(got) != 0 {
+		t.Fatalf("readTail after reset = %+v, want none", got)
+	}
+
+	// A write after reset should transparently recreate the file -
+	// reset must not leave the writer unable to persist for that
+	// service again on its next run.
+	w.write(logs.Event{Time: time.Now(), Service: "api", Stream: logs.StreamStdout, Message: "fresh run"})
+	drainSettle()
+	if got := readTail(dir, "api", 10); len(got) != 1 || got[0].Message != "fresh run" {
+		t.Fatalf("readTail after post-reset write = %+v, want just %q", got, "fresh run")
 	}
 }
 
@@ -125,5 +154,54 @@ func TestSeedHistoryMergesServicesInChronologicalOrder(t *testing.T) {
 		if snap[i].Message != w {
 			t.Errorf("snap[%d].Message = %q, want %q (order should be chronological across services)", i, snap[i].Message, w)
 		}
+	}
+}
+
+func TestMergeServiceHistorySkipsWhatDiskAlreadyHas(t *testing.T) {
+	base := time.Now()
+	disk := []logs.Event{
+		{Time: base, Message: "one"},
+		{Time: base.Add(time.Second), Message: "two"},
+	}
+	live := []logs.Event{
+		{Time: base.Add(time.Second), Message: "two"},       // already the disk tail's last event
+		{Time: base.Add(2 * time.Second), Message: "three"}, // newer than disk, must survive
+	}
+
+	got := mergeServiceHistory(disk, live)
+	want := []string{"one", "two", "three"}
+	if len(got) != len(want) {
+		t.Fatalf("mergeServiceHistory = %d events, want %d (got %+v)", len(got), len(want), got)
+	}
+	for i, w := range want {
+		if got[i].Message != w {
+			t.Errorf("got[%d].Message = %q, want %q", i, got[i].Message, w)
+		}
+	}
+}
+
+// TestServiceLogsSurvivesSharedBufferEviction guards the actual bug
+// report: switching the log view to a quiet service used to show an
+// empty page once a noisier service's volume pushed it out of
+// logs.Manager's shared, globally-capped buffer. Supervisor.ServiceLogs
+// falls back to the durable per-service disk file exactly for this.
+func TestServiceLogsSurvivesSharedBufferEviction(t *testing.T) {
+	dir := t.TempDir()
+	w := newLogWriter(dir)
+	w.write(logs.Event{Time: time.Now(), Service: "quiet", Stream: logs.StreamStdout, Message: "quiet's only line"})
+	drainSettle()
+
+	mgr := logs.NewManager(2) // small enough for "noisy" to fully evict "quiet"
+	for i := 0; i < 5; i++ {
+		mgr.Publish(logs.Event{Service: "noisy", Stream: logs.StreamStdout, Message: "spam"})
+	}
+	if snap := mgr.Snapshot("quiet"); len(snap) != 0 {
+		t.Fatalf("precondition failed: quiet should already be evicted from the shared buffer, got %+v", snap)
+	}
+
+	s := &Supervisor{logDir: dir, logsMgr: mgr}
+	got := s.ServiceLogs("quiet")
+	if len(got) != 1 || got[0].Message != "quiet's only line" {
+		t.Fatalf("ServiceLogs(quiet) = %+v, want its one line recovered from disk despite shared-buffer eviction", got)
 	}
 }

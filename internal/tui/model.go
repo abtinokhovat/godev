@@ -54,6 +54,18 @@ type Model struct {
 	logLines    []logLine
 	maxLogLines int
 
+	// scopedLogLines holds the currently-scoped service's full history
+	// (see Source.ServiceLogs), fetched fresh each time logScope is set
+	// to a specific service (see setLogScope) rather than filtered out
+	// of the shared, globally-capped logLines above - a quiet service's
+	// entire history can already have been evicted from that shared
+	// buffer by a noisier one's volume by the time it's viewed. Live
+	// events still land in both: logLines for the "all services" view,
+	// and this one too when they match the current scope, so the
+	// scoped view keeps tailing live without needing another fetch.
+	// Unused (nil) whenever logScope == "".
+	scopedLogLines []logLine
+
 	// commandMode/commandInput back the ":" prompt - typing space-
 	// separated service/group names and pressing enter starts exactly
 	// those (see domain.ResolveTargets), without needing to navigate
@@ -136,6 +148,27 @@ func New(sup Source, project string) Model {
 		m.selected = order[0]
 	}
 	return m
+}
+
+// setLogScope focuses the log view on one service, fetching its full
+// history fresh from the Source (see Source.ServiceLogs) rather than
+// trusting whatever's still in the shared logLines buffer - the fix
+// for switching to a quiet service and finding an empty page just
+// because a noisier one pushed its history out of that shared,
+// globally-capped buffer first.
+func (m *Model) setLogScope(name string) {
+	m.logScope = name
+	events := m.sup.ServiceLogs(name)
+	m.scopedLogLines = make([]logLine, 0, len(events))
+	for _, e := range events {
+		m.scopedLogLines = append(m.scopedLogLines, logLine{service: e.Service, stream: e.Stream, time: e.Time, text: e.Message})
+	}
+}
+
+// clearLogScope returns to the "all services" log view.
+func (m *Model) clearLogScope() {
+	m.logScope = ""
+	m.scopedLogLines = nil
 }
 
 type eventMsg application.Event

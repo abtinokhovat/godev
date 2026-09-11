@@ -14,20 +14,42 @@ import (
 // one-per-call via encoding/json's Encoder/Decoder, which already
 // frames successive values on a stream (no manual delimiter needed).
 type frame struct {
-	Kind     string       `json:"kind"`
-	Snapshot *snapshot    `json:"snapshot,omitempty"`
-	Event    *eventFrame  `json:"event,omitempty"`
-	Log      *logs.Event  `json:"log,omitempty"`
-	Action   *actionFrame `json:"action,omitempty"`
+	Kind            string               `json:"kind"`
+	Snapshot        *snapshot            `json:"snapshot,omitempty"`
+	Event           *eventFrame          `json:"event,omitempty"`
+	Log             *logs.Event          `json:"log,omitempty"`
+	Action          *actionFrame         `json:"action,omitempty"`
+	ServiceLogsReq  *serviceLogsRequest  `json:"serviceLogsReq,omitempty"`
+	ServiceLogsResp *serviceLogsResponse `json:"serviceLogsResp,omitempty"`
 }
 
 const (
-	kindSnapshot = "snapshot"
-	kindEvent    = "event"
-	kindLog      = "log"
-	kindAction   = "action"
-	kindShutdown = "shutdown"
+	kindSnapshot        = "snapshot"
+	kindEvent           = "event"
+	kindLog             = "log"
+	kindAction          = "action"
+	kindShutdown        = "shutdown"
+	kindServiceLogsReq  = "service_logs_req"
+	kindServiceLogsResp = "service_logs_resp"
 )
+
+// serviceLogsRequest/serviceLogsResponse are the one request/response
+// exchange in an otherwise fire-and-forget or push-only protocol - see
+// RemoteSource.ServiceLogs, which needs an actual reply (a service's
+// full history, not just whatever's trickled in since attaching)
+// rather than the async dispatch-and-let-events-show-it pattern every
+// other action uses. ID correlates a response back to its request so
+// two overlapping calls (a fast double scope-switch) can't hand each
+// other's history to the wrong caller.
+type serviceLogsRequest struct {
+	ID      int
+	Service string
+}
+
+type serviceLogsResponse struct {
+	ID   int
+	Logs []logs.Event
+}
 
 // snapshot is sent once, immediately after a client connects: enough
 // state to seed a tui.Source replica (RemoteSource) without waiting for

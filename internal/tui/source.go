@@ -31,6 +31,16 @@ type Source interface {
 	// detached instance's own history on attach.
 	RecentLogs() []logs.Event
 
+	// ServiceLogs returns as much of one service's log history as is
+	// available - its on-disk history merged with anything more recent
+	// still only in memory (see application.Supervisor.ServiceLogs) -
+	// rather than the shared, globally-capped live buffer RecentLogs/
+	// SubscribeLogs draws from, which a noisy service can push a quiet
+	// one's whole history out of. The TUI calls this on scoping into a
+	// specific service so switching to it never shows an empty page
+	// just because nothing else made it stay in the shared buffer.
+	ServiceLogs(name string) []logs.Event
+
 	Start(name string) error
 	Stop(name string) error
 	Restart(name string) error

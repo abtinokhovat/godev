@@ -12,6 +12,12 @@ import (
 	"github.com/abtinokhovat/godev/internal/logs"
 )
 
+// serviceLogsTimeout bounds how long ServiceLogs waits for the daemon
+// to reply before giving up and returning nothing - better an
+// occasional empty scope-switch than the TUI hanging because a reply
+// was lost (e.g. the daemon died mid-request).
+const serviceLogsTimeout = 3 * time.Second
+
 // RemoteSource implements tui.Source (structurally - internal/tui
 // imports neither this package nor application/domain/logs beyond what
 // it already did) as a locally-synced replica of a detached instance's
@@ -34,6 +40,20 @@ type RemoteSource struct {
 	logSubs   *fanout[logs.Event]
 
 	closed chan struct{}
+
+	// writeMu serializes every frame this client sends: actions are
+	// fired off from whatever goroutine handles a keypress (see
+	// sendAction), and ServiceLogs below both sends and blocks for a
+	// reply, so without this two calls racing each other could
+	// interleave partial writes on the same json.Encoder.
+	writeMu sync.Mutex
+
+	// nextReqID/pendingServiceLogs correlate a ServiceLogs reply (see
+	// serviceLogsResponse) back to the call that's waiting on it - the
+	// one request/response exchange in an otherwise fire-and-forget or
+	// push-only protocol.
+	nextReqID          int
+	pendingServiceLogs map[int]chan []logs.Event
 }
 
 // Dial connects to projectRoot's detached instance and blocks until
@@ -51,13 +71,14 @@ func Dial(projectRoot string, dialTimeout time.Duration) (*RemoteSource, error) 
 	}
 
 	r := &RemoteSource{
-		conn:       conn,
-		enc:        json.NewEncoder(conn),
-		runtimes:   map[string]domain.ServiceRuntime{},
-		buildInfos: map[string]application.BuildInfo{},
-		eventSubs:  newFanout[application.Event](),
-		logSubs:    newFanout[logs.Event](),
-		closed:     make(chan struct{}),
+		conn:               conn,
+		enc:                json.NewEncoder(conn),
+		runtimes:           map[string]domain.ServiceRuntime{},
+		buildInfos:         map[string]application.BuildInfo{},
+		eventSubs:          newFanout[application.Event](),
+		logSubs:            newFanout[logs.Event](),
+		closed:             make(chan struct{}),
+		pendingServiceLogs: map[int]chan []logs.Event{},
 	}
 
 	dec := json.NewDecoder(conn)
@@ -120,6 +141,17 @@ func (r *RemoteSource) readLoop(dec *json.Decoder) {
 			if f.Log != nil {
 				r.logSubs.publish(*f.Log)
 			}
+		case kindServiceLogsResp:
+			if f.ServiceLogsResp == nil {
+				continue
+			}
+			r.mu.Lock()
+			ch, ok := r.pendingServiceLogs[f.ServiceLogsResp.ID]
+			delete(r.pendingServiceLogs, f.ServiceLogsResp.ID)
+			r.mu.Unlock()
+			if ok {
+				ch <- f.ServiceLogsResp.Logs
+			}
 		}
 	}
 }
@@ -136,14 +168,20 @@ func (r *RemoteSource) Close() error { return r.conn.Close() }
 // Server listens for; it does not wait for the instance to actually
 // exit - see the `godev kill` command for that.
 func (r *RemoteSource) RequestShutdown() error {
+	r.writeMu.Lock()
+	defer r.writeMu.Unlock()
 	return r.enc.Encode(frame{Kind: kindShutdown})
 }
 
 func (r *RemoteSource) sendAction(action, service string) error {
+	r.writeMu.Lock()
+	defer r.writeMu.Unlock()
 	return r.enc.Encode(frame{Kind: kindAction, Action: &actionFrame{Action: action, Service: service}})
 }
 
 func (r *RemoteSource) sendBatchAction(action string, names []string) {
+	r.writeMu.Lock()
+	defer r.writeMu.Unlock()
 	_ = r.enc.Encode(frame{Kind: kindAction, Action: &actionFrame{Action: action, Services: names}})
 }
 
@@ -192,6 +230,44 @@ func (r *RemoteSource) RecentLogs() []logs.Event {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	return append([]logs.Event(nil), r.recentLogs...)
+}
+
+// ServiceLogs asks the detached instance for one service's full log
+// history (see Server's kindServiceLogsReq handling and
+// application.Supervisor.ServiceLogs) and blocks for the reply -
+// unlike every other method here, which either reads the locally kept
+// replica or fires an action without waiting. Returns nil on timeout
+// or if the connection drops before a reply arrives, same as any other
+// best-effort log source.
+func (r *RemoteSource) ServiceLogs(name string) []logs.Event {
+	r.mu.Lock()
+	id := r.nextReqID
+	r.nextReqID++
+	ch := make(chan []logs.Event, 1)
+	r.pendingServiceLogs[id] = ch
+	r.mu.Unlock()
+
+	r.writeMu.Lock()
+	err := r.enc.Encode(frame{Kind: kindServiceLogsReq, ServiceLogsReq: &serviceLogsRequest{ID: id, Service: name}})
+	r.writeMu.Unlock()
+	if err != nil {
+		r.mu.Lock()
+		delete(r.pendingServiceLogs, id)
+		r.mu.Unlock()
+		return nil
+	}
+
+	select {
+	case events := <-ch:
+		return events
+	case <-time.After(serviceLogsTimeout):
+		r.mu.Lock()
+		delete(r.pendingServiceLogs, id)
+		r.mu.Unlock()
+		return nil
+	case <-r.closed:
+		return nil
+	}
 }
 
 func (r *RemoteSource) Start(name string) error      { return r.sendAction(actionStart, name) }

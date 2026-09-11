@@ -172,9 +172,14 @@ root it's started in — safe to run in several projects at once.
 Every running service's PID is recorded to `state.json` under the
 project's cache dir (`~/.cache/godev/<project-id>/`), and every log
 line is persisted to a per-service file there too
-(`logs/<service>.log`, rotating at 10MB). This applies whether you're
-running in the foreground or via `--detach` — there's no separate
-"safe mode" to opt into.
+(`logs/<service>.log`) — piped straight from the process from the
+moment it starts, so the full history is on disk for as long as it
+runs, however much it logs. This applies whether you're running in
+the foreground or via `--detach` — there's no separate "safe mode" to
+opt into. A service's log file is only ever cleared when you
+deliberately stop it (`s`, or a group stop) — never mid-run, and never
+on a crash, so a crashed service's history is exactly what's left to
+recover.
 
 If godev crashes or is killed outright (not a clean `godev kill`),
 the services it was managing keep running — they're each their own

@@ -153,6 +153,21 @@ func (s *Supervisor) RecentLogs() []logs.Event {
 	return s.logsMgr.Snapshot("")
 }
 
+// ServiceLogs returns as much of one service's log history as is
+// available: its full on-disk file (see logstore.go - never rotated
+// away mid-run) merged with anything published more recently than the
+// disk read managed to catch up with. This is what the TUI calls on
+// scoping into a specific service, rather than trusting
+// logsMgr.Snapshot(name) alone - that snapshot is a filter over one
+// buffer shared by every service (see logBufferLines), so a quiet
+// service's whole history can already have been pushed out by a
+// noisier one's volume by the time the TUI asks for it.
+func (s *Supervisor) ServiceLogs(name string) []logs.Event {
+	disk := readTail(s.logDir, name, serviceScopeBacklog)
+	live := s.logsMgr.Snapshot(name)
+	return mergeServiceHistory(disk, live)
+}
+
 // Services returns the static config for every known service, in
 // discovery order.
 func (s *Supervisor) Services() []domain.Service {
