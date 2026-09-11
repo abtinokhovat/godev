@@ -6,6 +6,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/abtinokhovat/godev/internal/logs"
 )
@@ -197,5 +198,64 @@ func TestHighlightRangeWrapsWithReverseVideoNotFullReset(t *testing.T) {
 	}
 	if strings.Contains(got, "\x1b[0m") {
 		t.Errorf("highlightRange should not use a full reset (would clobber existing color), got %q", got)
+	}
+}
+
+// simulateReverse walks s tracking SGR reverse-video (7/27) state the
+// way a real terminal would, and returns which visible (non-escape)
+// characters were actually rendered reversed - the closest thing to
+// "what does this look like on screen" a unit test can check.
+func simulateReverse(s string) string {
+	reverseOn := false
+	var out strings.Builder
+	i := 0
+	for i < len(s) {
+		if s[i] == 0x1b {
+			end := strings.IndexByte(s[i:], 'm')
+			if end < 0 {
+				break
+			}
+			switch s[i : i+end+1] {
+			case "\x1b[7m":
+				reverseOn = true
+			case "\x1b[27m", "\x1b[0m", "\x1b[m":
+				reverseOn = false
+			}
+			i += end + 1
+			continue
+		}
+		if reverseOn {
+			out.WriteByte(s[i])
+		}
+		i++
+	}
+	return out.String()
+}
+
+// TestHighlightRangeSurvivesEmbeddedResets is a regression test for a
+// real bug: a log line is never one uninterrupted style run - the
+// timestamp, [service] tag, and message text are each their own
+// lipgloss Render() call, and each one ends with a *full* SGR reset
+// (\x1b[0m), not a scoped "undo my color" code. That reset cancels
+// highlightRange's own reverse-video wrapper the instant it fires, so
+// only whichever segment came first (the timestamp) actually looked
+// selected on screen - every later segment's own reset silently
+// turned the highlight back off again. Caught via a real user report
+// ("only the timestamps get highlighted"), not by the earlier,
+// single-style-run version of this test above.
+func TestHighlightRangeSurvivesEmbeddedResets(t *testing.T) {
+	ts := "\x1b[38;5;240m15:04:05\x1b[0m"
+	tag := "\x1b[1;38;5;214m[api]\x1b[0m"
+	line := ts + " " + tag + " " + "some log message text here"
+
+	highlighted := highlightRange(line, 0, 30)
+
+	wantPlain := ansi.Strip(line)
+	if len(wantPlain) < 30 {
+		t.Fatalf("test line too short: %q", wantPlain)
+	}
+	want := wantPlain[:30]
+	if got := simulateReverse(highlighted); got != want {
+		t.Fatalf("reversed-visible text = %q, want %q (highlight should span the whole range across every styled segment, not just the first)", got, want)
 	}
 }

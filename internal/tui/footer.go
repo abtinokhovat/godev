@@ -10,7 +10,6 @@ type hint struct {
 func (m Model) footerHints() []hint {
 	common := []hint{
 		{"↑↓", "select"},
-		{"m", "toggle mouse"},
 		{":", "run"},
 		{"q", "quit"},
 	}

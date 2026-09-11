@@ -248,6 +248,19 @@ func (m Model) selectedText() string {
 // uses to safely cut a styled line for horizontal scroll. SGR 7/27
 // (reverse on/off) rather than a full reset, so it doesn't clobber
 // whatever color the line already had once the highlight ends.
+//
+// A log line is rarely one uninterrupted style run, though - the
+// timestamp, the [service] tag, and the message are each their own
+// lipgloss.Style.Render() call, and every one of those ends with its
+// own full SGR reset (\x1b[0m), not just an "undo my color" code. Any
+// such reset inside the highlighted range cancels our reverse-video
+// wrapper the instant it fires, same as it would cancel anything
+// else's styling - without re-asserting reverse after it, only
+// whichever segment happens to come first (the timestamp) actually
+// looks selected, with every later segment's own reset silently
+// turning the highlight back off. Re-inserting \x1b[7m right after
+// every reset found inside the cut segment keeps it applied across
+// however many separately-styled runs the range spans.
 func highlightRange(line string, from, to int) string {
 	if to <= from {
 		return line
@@ -256,6 +269,9 @@ func highlightRange(line string, from, to int) string {
 	if mid == "" {
 		return line
 	}
+	mid = strings.ReplaceAll(mid, "\x1b[0m", "\x1b[0m\x1b[7m")
+	mid = strings.ReplaceAll(mid, "\x1b[m", "\x1b[m\x1b[7m")
+
 	pre := ansi.Cut(line, 0, from)
 	post := ansi.Cut(line, to, 1<<30)
 	return pre + "\x1b[7m" + mid + "\x1b[27m" + post

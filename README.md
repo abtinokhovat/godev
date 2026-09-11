@@ -88,7 +88,7 @@ than one target.
 ```
 ↑↓ select          enter focus logs      a all logs        tab expand detail
 r restart          s start/stop          d start/stop debug c clear logs
-R restart group    S start/stop group    m toggle mouse    : run by name/group
+R restart group    S start/stop group    : run by name/group
 1-4 switch view    pgup/pgdn/←→ scroll   ctrl+r reload config  q quit
 ```
 
@@ -103,9 +103,8 @@ R restart group    S start/stop group    m toggle mouse    : run by name/group
   pane the cursor is over; click-and-drag over the log pane selects
   text and copies it to your clipboard on release, same as a normal
   terminal — dragging above or below the visible log lines keeps
-  scrolling to reveal more while you hold it there. `m` turns mouse
-  tracking off entirely as a fallback (pure native mouse handling, no
-  godev mouse features at all), `m` again to get them back.
+  scrolling to reveal more while you hold it there. Selection only
+  ever applies to the log pane, never the sidebar.
 - `ctrl+r` re-reads `.godev.yaml`: adds new entries, restarts only
   services whose config actually changed, leaves everything else
   running untouched.

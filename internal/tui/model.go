@@ -63,14 +63,6 @@ type Model struct {
 	commandMode  bool
 	commandInput string
 
-	// mouseEnabled tracks whether the terminal is currently reporting
-	// mouse events to us at all (wheel-scroll-follows-pane,
-	// click-to-focus, and the drag-to-select below all depend on it).
-	// "m" toggles it off as a fallback for terminals where drag-select
-	// doesn't work well, restoring pure native mouse handling at the
-	// cost of every godev mouse feature until toggled back on.
-	mouseEnabled bool
-
 	// Mouse-drag text selection over the log pane (see selection.go).
 	// selecting is true only while a left-button drag is in progress.
 	// selAnchor*/selCursor* are indices into the Logs view's full,
@@ -118,14 +110,13 @@ func New(sup Source, project string) Model {
 	logsCh, _ := sup.SubscribeLogs(256)
 
 	m := Model{
-		sup:          sup,
-		project:      project,
-		services:     services,
-		runtimes:     runtimes,
-		maxLogLines:  2000,
-		eventsCh:     eventsCh,
-		logsCh:       logsCh,
-		mouseEnabled: true,
+		sup:         sup,
+		project:     project,
+		services:    services,
+		runtimes:    runtimes,
+		maxLogLines: 2000,
+		eventsCh:    eventsCh,
+		logsCh:      logsCh,
 	}
 	// Seed with whatever scrollback the source already has - a
 	// disk-backed replay of a previous run (see application.Supervisor's
