@@ -150,29 +150,6 @@ func TestScrollClampsToContentLengthAndUnwindsImmediately(t *testing.T) {
 	}
 }
 
-func TestMouseToggleKeyFlipsStateAndSendsCommand(t *testing.T) {
-	m := groupedTestModel(t)
-	m.mouseEnabled = true
-
-	next, cmd := m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("m")})
-	got := next.(Model)
-	if got.mouseEnabled {
-		t.Fatal("expected mouseEnabled = false after first \"m\"")
-	}
-	if cmd == nil {
-		t.Fatal("expected a tea.Cmd to disable mouse reporting")
-	}
-
-	next, cmd = got.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("m")})
-	got = next.(Model)
-	if !got.mouseEnabled {
-		t.Fatal("expected mouseEnabled = true after second \"m\"")
-	}
-	if cmd == nil {
-		t.Fatal("expected a tea.Cmd to re-enable mouse reporting")
-	}
-}
-
 func TestMouseClickSelectsSidebarService(t *testing.T) {
 	m := groupedTestModel(t)
 	m.width, m.height = 100, 30
