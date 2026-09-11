@@ -32,6 +32,7 @@ type Manager struct {
 	maxBuffer   int
 	subscribers map[int]chan Event
 	nextSubID   int
+	sink        func(Event)
 }
 
 // NewManager creates a Manager retaining up to maxBuffer lines of
@@ -47,7 +48,11 @@ func NewManager(maxBuffer int) *Manager {
 }
 
 // Publish records an event and notifies subscribers. Non-blocking: a
-// slow subscriber drops events rather than stalling the producer.
+// slow subscriber drops events rather than stalling the producer - the
+// sink (see SetSink), by contrast, is called synchronously and is
+// never skipped for backpressure, since it's meant for durable
+// persistence rather than a live view that's fine losing a line here
+// and there when it falls behind.
 func (m *Manager) Publish(e Event) {
 	if e.Time.IsZero() {
 		e.Time = time.Now()
@@ -57,17 +62,53 @@ func (m *Manager) Publish(e Event) {
 	if len(m.buffer) > m.maxBuffer {
 		m.buffer = m.buffer[len(m.buffer)-m.maxBuffer:]
 	}
+	sink := m.sink
 	subs := make([]chan Event, 0, len(m.subscribers))
 	for _, ch := range m.subscribers {
 		subs = append(subs, ch)
 	}
 	m.mu.Unlock()
 
+	if sink != nil {
+		sink(e)
+	}
 	for _, ch := range subs {
 		select {
 		case ch <- e:
 		default:
 		}
+	}
+}
+
+// SetSink installs a callback invoked synchronously, in Publish order,
+// for every event this Manager ever publishes - godev's own durable
+// on-disk log file writer (internal/application) is the only current
+// user, kept out of this package entirely so Manager itself stays a
+// plain in-memory pub/sub with no filesystem concerns of its own. A
+// nil sink (the default) disables it.
+func (m *Manager) SetSink(sink func(Event)) {
+	m.mu.Lock()
+	m.sink = sink
+	m.mu.Unlock()
+}
+
+// SeedHistory installs events as the manager's starting scrollback,
+// ahead of its current buffer, without touching subscribers or the
+// sink - for restoring history recovered from disk (a previous run's
+// log file) before anything has actually been Published this run,
+// which would otherwise re-broadcast old lines to live subscribers as
+// if they just happened and re-persist them as duplicates via the
+// sink. Events should already be in chronological order; the combined
+// buffer is trimmed to maxBuffer same as Publish.
+func (m *Manager) SeedHistory(events []Event) {
+	if len(events) == 0 {
+		return
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.buffer = append(append([]Event{}, events...), m.buffer...)
+	if len(m.buffer) > m.maxBuffer {
+		m.buffer = m.buffer[len(m.buffer)-m.maxBuffer:]
 	}
 }
 

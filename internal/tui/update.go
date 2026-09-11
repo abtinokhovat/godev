@@ -1,7 +1,6 @@
 package tui
 
 import (
-	"fmt"
 	"strings"
 	"time"
 
@@ -54,6 +53,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tickMsg:
 		return m, tickCmd()
+
+	case dragScrollTickMsg:
+		if !m.selecting || m.selDragEdge == 0 || m.view != ViewLogs {
+			return m, nil
+		}
+		m = m.advanceEdgeScroll()
+		return m, dragScrollTick()
 
 	case returnFromBuildMsg:
 		if m.autoBuildView && m.view == ViewBuild && time.Now().After(m.returnAt) {
@@ -278,13 +284,14 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
-	case "y":
-		if m.view == ViewLogs {
-			text, n := m.plainLogText()
-			osc52Copy(text)
-			m.appendLocalLogLine(fmt.Sprintf("copied %d log line(s) to clipboard", n))
+	case "m":
+		m.mouseEnabled = !m.mouseEnabled
+		if m.mouseEnabled {
+			m.appendLocalLogLine("mouse on (click-to-focus, wheel scroll)")
+			return m, tea.EnableMouseCellMotion
 		}
-		return m, nil
+		m.appendLocalLogLine("mouse off (drag to select/copy text normally)")
+		return m, tea.DisableMouse
 
 	case "ctrl+r":
 		go m.sup.Reload()
@@ -347,13 +354,24 @@ func (m Model) handleCommandInputKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 // handleMouse supports the mouse gestures that map cleanly onto
-// existing keyboard actions: the scroll wheel moves whichever pane
-// the cursor is currently over - the sidebar if it's over the
-// sidebar's column, the content pane otherwise - the same way
-// pgup/pgdown/left/right (content) or up/down (sidebar) do, and a left
-// click on a sidebar service row selects it and focuses its logs, the
-// same as navigating there with up/down and then pressing enter.
+// existing keyboard actions - the scroll wheel moves whichever pane
+// the cursor is currently over, and a left click on a sidebar service
+// row selects it and focuses its logs, the same as navigating there
+// with up/down and pressing enter - plus click-and-drag text
+// selection over the log pane (see selection.go). Motion and release
+// are checked before the button switch below, rather than as cases
+// within it, because terminals commonly report a release (and
+// sometimes an in-progress drag's motion) with Button == None rather
+// than the button that's actually held - m.selecting is what actually
+// tracks whether a drag is live, not the event's own button field.
 func (m Model) handleMouse(ev tea.MouseEvent) (tea.Model, tea.Cmd) {
+	if ev.Action == tea.MouseActionMotion && m.selecting {
+		return m.updateDrag(ev.X, ev.Y)
+	}
+	if ev.Action == tea.MouseActionRelease && m.selecting {
+		return m.finishDrag()
+	}
+
 	overSidebar := ev.X < m.sidebarWidth()
 
 	switch ev.Button {
@@ -407,6 +425,13 @@ func (m Model) handleMouse(ev tea.MouseEvent) (tea.Model, tea.Cmd) {
 				m.logScope = svc.Name
 				m.view = ViewLogs
 			}
+			return m, nil
+		}
+		if line, col, ok := m.logsHitTest(ev.X, ev.Y); ok {
+			m.selecting = true
+			m.selDragEdge = 0
+			m.selAnchorLine, m.selAnchorCol = line, col
+			m.selCursorLine, m.selCursorCol = line, col
 		}
 		return m, nil
 	}

@@ -115,3 +115,82 @@ func TestBuildEnvOverridesWithoutDiscardingRest(t *testing.T) {
 		t.Errorf("NEW = %q, want 1", got["NEW"])
 	}
 }
+
+func TestIsAliveReflectsActualProcessState(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("test uses /bin/sh")
+	}
+	h, err := Start(StartOptions{
+		Binary: "/bin/sh",
+		Args:   []string{"-c", "sleep 5"},
+		Env:    BuildEnv(nil),
+	})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if !IsAlive(h.PID) {
+		t.Fatal("expected IsAlive(pid) = true for a freshly-started process")
+	}
+
+	h.Kill()
+
+	if IsAlive(h.PID) {
+		t.Error("expected IsAlive(pid) = false once the process has exited")
+	}
+}
+
+func TestArgvMatchesNameUsesOverriddenArgv0(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses ps, and process groups aren't supported on Windows yet")
+	}
+	h, err := Start(StartOptions{
+		Binary: "/bin/sh",
+		Args:   []string{"-c", "sleep 5"},
+		Env:    BuildEnv(nil),
+		Name:   "my-service",
+	})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer h.Kill()
+
+	if !ArgvMatchesName(h.PID, "my-service") {
+		t.Error("expected argv[0] (set via Name) to match the recorded service name")
+	}
+	if ArgvMatchesName(h.PID, "some-other-name") {
+		t.Error("expected a different name not to match")
+	}
+}
+
+func TestAdoptDetectsExitWithoutBeingAChild(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("test uses /bin/sh")
+	}
+	h, err := Start(StartOptions{
+		Binary: "/bin/sh",
+		Args:   []string{"-c", "sleep 5"},
+		Env:    BuildEnv(nil),
+	})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	// Adopt doesn't know or care whether pid is actually our child - it
+	// only ever polls liveness, unlike Start's handle which relies on
+	// cmd.Wait(). Using our own already-started process as the subject
+	// is enough to exercise that polling mechanism end to end.
+	adopted := Adopt(h.PID)
+	select {
+	case <-adopted.Done():
+		t.Fatal("adopted handle reported done before the process was killed")
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	h.Kill()
+
+	select {
+	case <-adopted.Done():
+	case <-time.After(3 * time.Second):
+		t.Fatal("adopted handle never reported done after the process exited")
+	}
+}

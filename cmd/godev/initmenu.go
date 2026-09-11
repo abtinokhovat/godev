@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -12,112 +11,39 @@ import (
 
 	"github.com/abtinokhovat/godev/internal/config"
 	"github.com/abtinokhovat/godev/internal/discovery"
-	"github.com/abtinokhovat/godev/internal/discovery/jetbrains"
 )
 
-// candidate is one thing `godev init` found that could become a
-// .godev.yaml entry: a discovered Go package, or a JetBrains-imported
-// non-Go run configuration. A JetBrains Go run configuration never
-// becomes its own candidate - it enriches a matching Go candidate's
-// Args/Env/Group instead, exactly like it enriches an already-
-// discovered service at runtime today.
+// candidate is one Go package `godev init` discovered that could
+// become a .godev.yaml entry.
 type candidate struct {
 	Name      string
-	IsGo      bool
-	Package   string   // Go import path, set when IsGo
-	Command   []string // explicit command, set when !IsGo
-	Directory string   // absolute
+	Package   string // Go import path
+	Directory string // absolute
 	Args      []string
 	Env       map[string]string
 	Group     []string
 }
 
-func (c candidate) source() string {
-	if c.IsGo {
-		return c.Package
-	}
-	return strings.Join(c.Command, " ")
-}
-
-func (c candidate) kind() string {
-	if c.IsGo {
-		return "go"
-	}
-	return "command"
-}
-
-// gatherCandidates runs Go discovery and JetBrains import exactly
-// once and normalizes the result into a flat, selectable list,
-// skipping any name already present in existingNames - a re-run of
-// `godev init` only ever offers what's genuinely new, never touching
-// services the user already configured (or already declined).
+// gatherCandidates runs Go discovery and normalizes the result into a
+// flat, selectable list, skipping any name already present in
+// existingNames - a re-run of `godev init` only ever offers what's
+// genuinely new, never touching services the user already configured
+// (or already declined).
 func gatherCandidates(root string, isGoModule bool, existingNames map[string]bool) ([]candidate, error) {
-	var candidates []candidate
-	byDir := map[string]int{}
-
-	if isGoModule {
-		apps, err := discovery.Discover(root)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "warning: Go package discovery failed, continuing without auto-discovered Go services: %v\n", err)
-		}
-		for _, a := range apps {
-			if existingNames[a.Name] {
-				continue
-			}
-			byDir[a.Directory] = len(candidates)
-			candidates = append(candidates, candidate{
-				Name: a.Name, IsGo: true, Package: a.Package, Directory: a.Directory,
-			})
-		}
+	if !isGoModule {
+		return nil, nil
 	}
-
-	configs, err := jetbrains.Import(root)
+	apps, err := discovery.Discover(root)
 	if err != nil {
-		return nil, fmt.Errorf("importing JetBrains run configurations: %w", err)
+		fmt.Fprintf(os.Stderr, "warning: Go package discovery failed, continuing without auto-discovered Go services: %v\n", err)
 	}
-
-	used := map[string]bool{}
-	for n := range existingNames {
-		used[n] = true
-	}
-	for _, c := range candidates {
-		used[c.Name] = true
-	}
-
-	for _, rc := range configs {
-		if rc.IsGo {
-			i, ok := byDir[rc.Directory]
-			if !ok {
-				// No discovered (and not-yet-configured) Go candidate
-				// at this directory - either already configured, or
-				// not a service godev's own discovery found.
-				continue
-			}
-			candidates[i].Args = rc.Args
-			candidates[i].Env = rc.Env
-			candidates[i].Group = rc.Group
+	var candidates []candidate
+	for _, a := range apps {
+		if existingNames[a.Name] {
 			continue
 		}
-		if existingNames[rc.Name] {
-			continue
-		}
-		name := rc.Name
-		for used[name] {
-			name += "-2"
-		}
-		used[name] = true
-		candidates = append(candidates, candidate{
-			Name: name, IsGo: false, Command: rc.Command, Directory: rc.Directory,
-			Env: rc.Env, Group: rc.Group,
-		})
+		candidates = append(candidates, candidate{Name: a.Name, Package: a.Package, Directory: a.Directory})
 	}
-
-	// Go candidates first, JetBrains-imported command candidates after
-	// - stable within each group (discovery/import order).
-	sort.SliceStable(candidates, func(i, j int) bool {
-		return candidates[i].IsGo && !candidates[j].IsGo
-	})
-
 	return candidates, nil
 }
 
@@ -142,37 +68,17 @@ func writeSelected(root string, existing *config.File, selected []candidate) err
 	}
 	falseVal, trueVal := false, true
 	for _, c := range selected {
-		sc := config.ServiceConfig{
+		f.Services[c.Name] = config.ServiceConfig{
+			Path:        c.Package,
 			Args:        c.Args,
 			Env:         c.Env,
 			Group:       c.Group,
 			AutoStart:   &falseVal,
 			AutoRestart: &trueVal,
+			HotReload:   &trueVal,
 		}
-		if c.IsGo {
-			sc.Path = c.Package
-			sc.HotReload = &trueVal
-		} else {
-			sc.Command = c.Command
-			sc.Directory = relDirectory(root, c.Directory)
-		}
-		f.Services[c.Name] = sc
 	}
 	return writeConfig(filepath.Join(root, config.FileName), *f)
-}
-
-// relDirectory renders dir relative to root for a cleaner, more
-// portable .godev.yaml when possible, falling back to the absolute
-// path for anything outside the project tree.
-func relDirectory(root, dir string) string {
-	rel, err := filepath.Rel(root, dir)
-	if err != nil || strings.HasPrefix(rel, "..") {
-		return dir
-	}
-	if rel == "." {
-		return ""
-	}
-	return rel
 }
 
 // runInitFlow discovers candidates, runs the interactive checklist,
@@ -197,9 +103,9 @@ func runInitFlow(root string, isGoModule bool) (wrote bool, err error) {
 	}
 	if len(candidates) == 0 {
 		if len(existingNames) > 0 {
-			fmt.Println("Nothing new to add - every discovered Go package and JetBrains run configuration is already in .godev.yaml.")
+			fmt.Println("Nothing new to add - every discovered Go package is already in .godev.yaml.")
 		} else {
-			fmt.Println("Nothing discovered: no Go main packages and no JetBrains run configurations found.")
+			fmt.Println("Nothing discovered: no Go main packages found.")
 			fmt.Printf("Define services by hand in %s instead - see .godev.example.yaml.\n", config.FileName)
 		}
 		return false, nil
@@ -221,7 +127,7 @@ func runInitFlow(root string, isGoModule bool) (wrote bool, err error) {
 
 	fmt.Printf("Added %d service(s) to %s (auto_start: false - start them with `godev run <name>` or from the TUI):\n", len(selected), config.FileName)
 	for _, c := range selected {
-		fmt.Printf("  %-16s %s: %s\n", c.Name, c.kind(), c.source())
+		fmt.Printf("  %-16s go: %s\n", c.Name, c.Package)
 	}
 	return true, nil
 }
@@ -411,9 +317,9 @@ func (m initMenuModel) View() string {
 		if it.selected {
 			box = "[x]"
 		}
-		line := fmt.Sprintf("%s %-20s %-8s %s", box, truncateMenu(it.name, 20), it.kind(), it.source())
+		line := fmt.Sprintf("%s %-20s %s", box, truncateMenu(it.name, 20), it.Package)
 		if i == m.cursor && m.renaming {
-			line = fmt.Sprintf("%s %-20s %-8s %s", box, truncateMenu(m.renameBuf+"█", 20), it.kind(), it.source())
+			line = fmt.Sprintf("%s %-20s %s", box, truncateMenu(m.renameBuf+"█", 20), it.Package)
 		}
 		if i == m.cursor {
 			b.WriteString(initMenuStyleSelected.Render(line))

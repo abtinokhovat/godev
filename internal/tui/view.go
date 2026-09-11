@@ -75,7 +75,7 @@ func (m Model) View() string {
 	sidebarLines := m.renderSidebar()
 
 	title := styleSection.Render(viewTitle(m.view)+" ") + styleDim.Render("· "+m.scopeLabel())
-	contentAll := m.renderContent(contentWidth)
+	contentAll := m.applySelectionHighlight(m.renderContent(contentWidth))
 	contentHeight := m.contentHeight()
 	visible := window(contentAll, m.scroll, contentHeight)
 	// Cut each line to the horizontal viewport - ANSI-aware, so a

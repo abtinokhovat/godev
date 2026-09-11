@@ -10,9 +10,7 @@ type hint struct {
 func (m Model) footerHints() []hint {
 	common := []hint{
 		{"↑↓", "select"},
-		{"pgup/dn ←→", "scroll"},
-		{"1-4", "views"},
-		{"ctrl+r", "reload config"},
+		{"m", "toggle mouse"},
 		{":", "run"},
 		{"q", "quit"},
 	}
@@ -21,7 +19,7 @@ func (m Model) footerHints() []hint {
 		return append([]hint{
 			{"enter", "focus"}, {"a/esc", "all"}, {"tab", "detail"},
 			{"r", "restart"}, {"s", "start/stop"}, {"R", "restart group"}, {"S", "start/stop group"},
-			{"d", "debug"}, {"c", "clear"}, {"y", "copy"},
+			{"d", "debug"}, {"c", "clear"},
 		}, common...)
 	case ViewBuild:
 		return append([]hint{{"tab", "detail"}, {"r", "restart"}}, common...)

@@ -6,10 +6,10 @@ on source changes, restarts crashes with backoff, and attaches Delve
 for VS Code/GoLand — all from one TUI. Non-Go services (frontend dev
 servers, shell scripts, anything) run alongside Go ones the same way.
 
-Config is explicit: `godev init` discovers Go packages and JetBrains
-run configs and writes `.godev.yaml`; every later `godev` run reads
-only that file, so startup is instant regardless of project size and
-nothing runs that you didn't select.
+Config is explicit: `godev init` discovers Go packages and writes
+`.godev.yaml`; every later `godev` run reads only that file, so
+startup is instant regardless of project size and nothing runs that
+you didn't select.
 
 ## Install
 
@@ -45,9 +45,9 @@ godev
 ```
 
 With no `.godev.yaml`, this runs discovery and drops into a checklist
-of every Go `main` package and importable JetBrains run config —
-pick what becomes a service, rename any of them, confirm. From then
-on `godev` just opens the TUI against `.godev.yaml`.
+of every Go `main` package — pick what becomes a service, rename any
+of them, confirm. From then on `godev` just opens the TUI against
+`.godev.yaml`.
 
 ```
 ┌ my-project ──────────────────────────────────── 3 service(s) · 1 running ┐
@@ -88,7 +88,7 @@ than one target.
 ```
 ↑↓ select          enter focus logs      a all logs        tab expand detail
 r restart          s start/stop          d start/stop debug c clear logs
-R restart group    S start/stop group    y copy logs        : run by name/group
+R restart group    S start/stop group    m toggle mouse    : run by name/group
 1-4 switch view    pgup/pgdn/←→ scroll   ctrl+r reload config  q quit
 ```
 
@@ -96,11 +96,16 @@ R restart group    S start/stop group    y copy logs        : run by name/group
   running, else stop/restart all members), one at a time, not
   concurrently.
 - `:` opens a prompt — type service/group names, `enter` starts them
-  without navigating the sidebar first.
+  without navigating the sidebar first. Works with any configured
+  service, not just the ones named on the command line that launched
+  this session.
 - Mouse: click a service to focus its logs; wheel scrolls whichever
-  pane the cursor is over.
-- `y` copies the current log view to your clipboard (OSC 52 — works
-  over SSH/tmux too).
+  pane the cursor is over; click-and-drag over the log pane selects
+  text and copies it to your clipboard on release, same as a normal
+  terminal — dragging above or below the visible log lines keeps
+  scrolling to reveal more while you hold it there. `m` turns mouse
+  tracking off entirely as a fallback (pure native mouse handling, no
+  godev mouse features at all), `m` again to get them back.
 - `ctrl+r` re-reads `.godev.yaml`: adds new entries, restarts only
   services whose config actually changed, leaves everything else
   running untouched.
@@ -136,9 +141,9 @@ under a shared sidebar header and lets `godev run <group>` start them
 together; a service in multiple groups displays under its
 smallest/most-specific one but works with all of them.
 
-Non-Go services and JetBrains imports never run automatically from
-discovery — everything goes through `godev init`'s checklist first,
-written with `auto_start: false`.
+Non-Go services are added by hand-editing `.godev.yaml` — there's no
+discovery for them. Review a command before setting `auto_start: true`
+on it, the same as any command you'd run yourself.
 
 ## Debugging
 
@@ -163,16 +168,45 @@ Exposes this project's services to an AI agent over
 `restart_service`, `start_debug`/`stop_debug`. Scoped to the project
 root it's started in — safe to run in several projects at once.
 
+## Crash recovery and log persistence
+
+Every running service's PID is recorded to `state.json` under the
+project's cache dir (`~/.cache/godev/<project-id>/`), and every log
+line is persisted to a per-service file there too
+(`logs/<service>.log`, rotating at 10MB). This applies whether you're
+running in the foreground or via `--detach` — there's no separate
+"safe mode" to opt into.
+
+If godev crashes or is killed outright (not a clean `godev kill`),
+the services it was managing keep running — they're each their own
+process group, independent of godev's own lifetime. The next `godev`
+run for that project reads the registry back: a service whose
+recorded PID is still alive, and whose process still looks like the
+one godev started (its argv[0] still matches the service name — PIDs
+get reused by the OS, so liveness alone isn't proof), is adopted
+instead of duplicated or abandoned. Its pre-crash log history is
+restored too, read back from disk. One limitation: an adopted
+service's *live* output usually doesn't resume automatically — its
+original stdout/stderr were pipes to the now-dead instance, which a
+new one can't reconnect to (and many processes get killed by SIGPIPE
+the next time they try to write to a pipe with no reader anyway).
+Restarting an adopted service (`r`, or `R` for its group) gives it a
+fresh pipe and resumes live output normally.
+
+This also means a completely normal, non-crashed `godev` restart
+picks up right where the log view left off, instead of starting
+blank.
+
 ## Architecture
 
 | Package | Responsibility |
 |---|---|
-| `internal/discovery`, `internal/discovery/jetbrains` | Go package + JetBrains run-config discovery, `godev init` only |
+| `internal/discovery` | Go package discovery, `godev init` only |
 | `internal/config` | reads/merges `.godev.yaml`, preserves declaration order |
 | `internal/builder` | `go build` into `~/.cache/godev/<project-id>/`, atomic install |
-| `internal/process` | process lifecycle, own process group, argv[0] renamed to service name |
+| `internal/process` | process lifecycle, own process group, argv[0] renamed to service name, PID-based adoption |
 | `internal/watcher` | debounced fsnotify on `*.go`/`go.mod`/`go.sum` |
-| `internal/application` | Supervisor — state machine, backoff, hot-reload cascade, concurrency caps |
+| `internal/application` | Supervisor — state machine, backoff, hot-reload cascade, concurrency caps, crash-recovery registry + log persistence |
 | `internal/ports` | polls listening TCP ports per process |
 | `internal/debugger` | launches/manages headless Delve |
 | `internal/daemon` | `--detach`/`attach`/`kill` client-server protocol |

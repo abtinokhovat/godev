@@ -1,8 +1,8 @@
 # Copy to .godev.yaml at your project root, or let `godev init` write
-# it for you from an interactive checklist of discovered Go packages
-# and imported JetBrains run configurations. Every field but one of
-# path/command is optional. This is the only file godev reads to build
-# its service list - nothing here is re-discovered at runtime.
+# it for you from an interactive checklist of discovered Go packages.
+# Every field but one of path/command is optional. This is the only
+# file godev reads to build its service list - nothing here is
+# re-discovered at runtime.
 services:
   # A Go service: path is the import path godev builds with `go
   # build`. auto_start defaults to false (what `godev init` writes) -

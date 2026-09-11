@@ -63,6 +63,30 @@ type Model struct {
 	commandMode  bool
 	commandInput string
 
+	// mouseEnabled tracks whether the terminal is currently reporting
+	// mouse events to us at all (wheel-scroll-follows-pane,
+	// click-to-focus, and the drag-to-select below all depend on it).
+	// "m" toggles it off as a fallback for terminals where drag-select
+	// doesn't work well, restoring pure native mouse handling at the
+	// cost of every godev mouse feature until toggled back on.
+	mouseEnabled bool
+
+	// Mouse-drag text selection over the log pane (see selection.go).
+	// selecting is true only while a left-button drag is in progress.
+	// selAnchor*/selCursor* are indices into the Logs view's full,
+	// unwindowed content list (scroll-independent, unlike a screen
+	// row) plus a column in that line's plain text, so a selection
+	// stays correct across the edge auto-scroll below. selDragEdge is
+	// nonzero while the drag point sits above (-1) or below (+1) the
+	// visible log rows, driving the repeating auto-scroll tick that
+	// keeps revealing more content as long as it's held there.
+	selecting     bool
+	selDragEdge   int
+	selAnchorLine int
+	selAnchorCol  int
+	selCursorLine int
+	selCursorCol  int
+
 	// autoBuildView remembers that we switched to the Build view
 	// automatically (because the selected service started building) so
 	// we know to switch back once the build settles, per the "shown
@@ -94,13 +118,24 @@ func New(sup Source, project string) Model {
 	logsCh, _ := sup.SubscribeLogs(256)
 
 	m := Model{
-		sup:         sup,
-		project:     project,
-		services:    services,
-		runtimes:    runtimes,
-		maxLogLines: 2000,
-		eventsCh:    eventsCh,
-		logsCh:      logsCh,
+		sup:          sup,
+		project:      project,
+		services:     services,
+		runtimes:     runtimes,
+		maxLogLines:  2000,
+		eventsCh:     eventsCh,
+		logsCh:       logsCh,
+		mouseEnabled: true,
+	}
+	// Seed with whatever scrollback the source already has - a
+	// disk-backed replay of a previous run (see application.Supervisor's
+	// seedHistory), or a detached instance's own history on attach -
+	// rather than starting the log view blank every time.
+	for _, e := range sup.RecentLogs() {
+		m.logLines = append(m.logLines, logLine{service: e.Service, stream: e.Stream, time: e.Time, text: e.Message})
+	}
+	if len(m.logLines) > m.maxLogLines {
+		m.logLines = m.logLines[len(m.logLines)-m.maxLogLines:]
 	}
 	// Ungrouped services always render first (see groupedRows), so
 	// index 0 is usually already the top row - but if service 0 happens

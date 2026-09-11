@@ -1,0 +1,224 @@
+package application
+
+import (
+	"bufio"
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"sort"
+	"sync"
+
+	"github.com/abtinokhovat/godev/internal/logs"
+)
+
+// logFileMaxBytes is where a service's on-disk log rotates to a
+// single backup (<service>.log.1) - big enough to hold a lot of real
+// history, small enough that a service running for days doesn't grow
+// its log file without bound.
+const logFileMaxBytes = 10 * 1024 * 1024
+
+// seedLinesPerService caps how much of each service's prior-run log
+// gets loaded back into memory at startup (see seedHistory) - enough
+// to feel like nothing was lost, without one chatty service's huge
+// log file crowding out every other service's history in the shared
+// in-memory buffer it all lands in afterward.
+const seedLinesPerService = 1000
+
+// logWriterQueue is how many events logWriter will buffer ahead of the
+// disk while its background goroutine catches up - generous enough
+// that an ordinary burst (a noisy build, several services starting at
+// once) never has to drop anything in practice.
+const logWriterQueue = 4096
+
+// logWriter appends every published logs.Event to a per-service file
+// on disk (NDJSON: one JSON object per line, which - unlike a naive
+// "timestamp\tmessage" format - survives a message with embedded
+// newlines, like a multi-line build failure, without corrupting line
+// boundaries on the way back in). Installed as the Supervisor's
+// logs.Manager sink, so it's called for every log line from every
+// call site (build output, lifecycle messages, pumped stdout/stderr)
+// with no changes needed at any of them.
+//
+// The actual file write happens on a dedicated background goroutine,
+// off write's own call path: write only ever does a non-blocking
+// channel send (dropping the line, same as a slow logs.Manager
+// subscriber would, if the queue is ever actually full) rather than
+// touching the filesystem itself. This matters beyond just avoiding
+// I/O latency in the logging path generally - Supervisor.startProcess
+// calls s.log() for its own "started" message before launching the
+// goroutines that watch the new process, and synchronous disk I/O
+// there once measurably delayed that launch enough for a Stop()
+// called immediately after to race all the way to Stopped before
+// monitor() ever got scheduled to see it, misreporting a clean stop
+// as a crash.
+//
+// This is what makes log history survive a godev crash - a real file
+// keeps growing untouched even if the process reading it dies, unlike
+// the in-memory buffer or a pipe. Best-effort throughout: a
+// filesystem problem here should never take down log delivery to the
+// TUI, which still works via logs.Manager's in-memory path regardless.
+type logWriter struct {
+	dir   string
+	queue chan logs.Event
+
+	mu    sync.Mutex
+	files map[string]*os.File
+}
+
+func newLogWriter(dir string) *logWriter {
+	w := &logWriter{
+		dir:   dir,
+		files: map[string]*os.File{},
+		queue: make(chan logs.Event, logWriterQueue),
+	}
+	go w.drain()
+	return w
+}
+
+func logFilePath(dir, service string) string {
+	return filepath.Join(dir, service+".log")
+}
+
+// write is logs.Manager's sink: a non-blocking enqueue, never the
+// actual file I/O - see the type doc for why that distinction matters.
+func (w *logWriter) write(e logs.Event) {
+	if w.dir == "" || e.Service == "" {
+		return
+	}
+	select {
+	case w.queue <- e:
+	default:
+	}
+}
+
+// drain is the one goroutine that actually touches the filesystem,
+// serializing every write without needing write's own callers to
+// block on each other. It runs for the life of the process rather
+// than being explicitly stopped by closeAll: the queue is never
+// closed (a concurrent write() racing a close would panic - a sender
+// checking for a full channel via select/default has no way to also
+// check for a closed one), so any goroutine still calling s.log()
+// during shutdown (monitor, pollPorts, ...) is always safe to do so.
+// The cost is that whatever's still sitting in the queue at process
+// exit never reaches disk - an acceptable loss for what's already
+// documented as best-effort persistence, and a single idle goroutine
+// blocked on an empty channel read costs nothing worth avoiding it for.
+func (w *logWriter) drain() {
+	for e := range w.queue {
+		w.persist(e)
+	}
+}
+
+func (w *logWriter) persist(e logs.Event) {
+	data, err := json.Marshal(e)
+	if err != nil {
+		return
+	}
+
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	f, err := w.fileLocked(e.Service)
+	if err != nil {
+		return
+	}
+	f.Write(data)
+	f.Write([]byte("\n"))
+}
+
+func (w *logWriter) fileLocked(service string) (*os.File, error) {
+	path := logFilePath(w.dir, service)
+	if f, ok := w.files[service]; ok {
+		if fi, err := f.Stat(); err != nil || fi.Size() <= logFileMaxBytes {
+			return f, nil
+		}
+		f.Close()
+		delete(w.files, service)
+		os.Rename(path, path+".1")
+	} else if fi, err := os.Stat(path); err == nil && fi.Size() > logFileMaxBytes {
+		// Not yet opened by this instance at all (its first write since
+		// this Supervisor started, or right after adopting a process
+		// left running by a previous one) but already oversized on disk
+		// - rotate before ever touching it, not just on a later write
+		// once it's grown past the limit again under this instance's
+		// own tracking.
+		os.Rename(path, path+".1")
+	}
+	if err := os.MkdirAll(w.dir, 0o755); err != nil {
+		return nil, err
+	}
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	if err != nil {
+		return nil, err
+	}
+	w.files[service] = f
+	return f, nil
+}
+
+// closeAll closes every open per-service file - called from
+// Supervisor.Shutdown for a clean exit; harmless to skip on a crash,
+// since the OS closes file descriptors on process exit regardless.
+// Does not stop drain (see its doc comment for why) - a write() racing
+// this is just a few more lines written to a file about to be closed
+// anyway, never a panic.
+func (w *logWriter) closeAll() {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	for name, f := range w.files {
+		f.Close()
+		delete(w.files, name)
+	}
+}
+
+// readTail returns up to n events from the tail of service's current
+// log file - not its rotated .log.1 backup, which exists purely as a
+// just-in-case archive, not part of the live seeding/tailing path.
+// Best-effort: a missing file or unparseable line yields whatever
+// could be read, never an error the caller needs to handle.
+func readTail(dir, service string, n int) []logs.Event {
+	f, err := os.Open(logFilePath(dir, service))
+	if err != nil {
+		return nil
+	}
+	defer f.Close()
+
+	var lines []string
+	scanner := bufio.NewScanner(f)
+	scanner.Buffer(make([]byte, 64*1024), 4*1024*1024)
+	for scanner.Scan() {
+		lines = append(lines, scanner.Text())
+		if len(lines) > n {
+			lines = lines[len(lines)-n:]
+		}
+	}
+
+	out := make([]logs.Event, 0, len(lines))
+	for _, line := range lines {
+		var e logs.Event
+		if json.Unmarshal([]byte(line), &e) == nil {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
+// seedHistory loads each service's recent on-disk log history (see
+// readTail) and installs it as the Manager's starting scrollback, in
+// overall chronological order - restoring "what was here before" for
+// every service that has a log file already, whether that's from a
+// clean previous run or one this instance is about to adopt a
+// still-running process from (see adoptRunning). Best-effort: services
+// with no log file yet (a first-ever run) simply contribute nothing.
+func (s *Supervisor) seedHistory() {
+	if s.logDir == "" {
+		return
+	}
+	var all []logs.Event
+	for _, name := range s.serviceNames() {
+		all = append(all, readTail(s.logDir, name, seedLinesPerService)...)
+	}
+	if len(all) == 0 {
+		return
+	}
+	sort.SliceStable(all, func(i, j int) bool { return all[i].Time.Before(all[j].Time) })
+	s.logsMgr.SeedHistory(all)
+}

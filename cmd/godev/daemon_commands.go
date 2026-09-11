@@ -77,7 +77,11 @@ func cmdDaemonRun(targets []string) int {
 		return 1
 	}
 
-	sup, err := application.NewSupervisor(p.Root, services)
+	// Same reasoning as runTUI (commands.go): the Supervisor needs
+	// every configured service so an attached TUI's ":" prompt can
+	// reach services beyond what was named on this command line, not
+	// just the resolved subset used below to decide what actually starts.
+	sup, err := application.NewSupervisor(p.Root, p.Services)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
 		return 1

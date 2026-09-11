@@ -10,11 +10,11 @@ package domain
 //   - Go discovery (`go list`): Package is set to the main package's
 //     import path, Command is empty, and godev compiles it before
 //     running the resulting binary.
-//   - A manual .godev.yaml entry or an imported JetBrains run
-//     configuration: Command is set directly (e.g. ["node","server.js"]
-//     or ["npm","run","dev"]) and Package is empty. There is no build
-//     step for these - godev execs Command as-is. Debugging (currently
-//     Delve-only) is not supported for Command-based services.
+//   - A manual .godev.yaml entry: Command is set directly (e.g.
+//     ["node","server.js"] or ["npm","run","dev"]) and Package is
+//     empty. There is no build step for these - godev execs Command
+//     as-is. Debugging (currently Delve-only) is not supported for
+//     Command-based services.
 type Service struct {
 	Name        string
 	Package     string   // Go import path, e.g. "./cmd/api". Empty for Command-based services.

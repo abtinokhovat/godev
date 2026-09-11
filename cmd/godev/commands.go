@@ -122,7 +122,12 @@ func cmdRun(targets []string) int {
 	for i, s := range services {
 		names[i] = s.Name
 	}
-	return runTUI(p, services, filepath.Base(p.Root)+" · "+label, names)
+	// The Supervisor gets every configured service, not just the
+	// resolved subset - otherwise the TUI's ":" prompt could only ever
+	// reach the services named on this command line, defeating its
+	// whole point (starting something you didn't originally target).
+	// Only startNames (below) is actually scoped to what was requested.
+	return runTUI(p, p.Services, filepath.Base(p.Root)+" · "+label, names)
 }
 
 func serviceSource(s domain.Service) string {
@@ -324,8 +329,8 @@ func otherGroups(s domain.Service, primary string) string {
 }
 
 // cmdInit is godev's only entry point for discovery: it runs `go
-// list`/JetBrains import once, lets the user pick exactly which
-// results become services (renaming any of them first, if the
+// list` once, lets the user pick exactly which results become
+// services (renaming any of them first, if the
 // auto-derived name isn't the one they want), and writes the result
 // into .godev.yaml with auto_start left off. Every other command only
 // ever reads .godev.yaml - see loadProject - so this is also the only

@@ -5,11 +5,14 @@ package process
 
 import (
 	"bufio"
+	"errors"
 	"io"
 	"os"
 	"os/exec"
 	"time"
 )
+
+var errAdoptedProcessExited = errors.New("process exited")
 
 // OutputLine is one line of output from a running process.
 type OutputLine struct {
@@ -111,22 +114,61 @@ func (h *Handle) Done() <-chan struct{} {
 }
 
 // Stop sends SIGTERM to the process group, waiting up to timeout before
-// escalating to SIGKILL, per section 50.
+// escalating to SIGKILL, per section 50. Uses h.PID rather than
+// h.cmd.Process.Pid so it works the same whether h came from Start (a
+// real child, with cmd set) or Adopt (a PID recovered from a previous
+// godev instance, with no *exec.Cmd at all).
 func (h *Handle) Stop(timeout time.Duration) {
-	terminateGroup(h.cmd.Process.Pid)
+	terminateGroup(h.PID)
 	select {
 	case <-h.done:
 		return
 	case <-time.After(timeout):
 	}
-	killGroup(h.cmd.Process.Pid)
+	killGroup(h.PID)
 	<-h.done
 }
 
 // Kill immediately force-kills the process group.
 func (h *Handle) Kill() {
-	killGroup(h.cmd.Process.Pid)
+	killGroup(h.PID)
 	<-h.done
+}
+
+// adoptedPollInterval is how often Adopt checks whether the process it
+// wraps is still alive. There's no *exec.Cmd to Wait() on for a process
+// this godev instance didn't itself start, so liveness has to be
+// polled instead of blocking on a real child-exit notification.
+const adoptedPollInterval = 1 * time.Second
+
+// Adopt wraps an already-running process - one recovered from the
+// on-disk registry, left behind by a previous godev instance that
+// didn't shut down cleanly - as a Handle, so the Supervisor's
+// stop/restart/monitor logic can treat it exactly like one it spawned
+// itself. See Supervisor.adoptRunning for the liveness+fingerprint
+// check that must pass before this is ever called.
+func Adopt(pid int) *Handle {
+	h := &Handle{PID: pid, done: make(chan struct{})}
+	go func() {
+		for isAlive(pid) {
+			time.Sleep(adoptedPollInterval)
+		}
+		h.exitErr = errAdoptedProcessExited
+		close(h.done)
+	}()
+	return h
+}
+
+// IsAlive reports whether pid names a live process - exported for
+// Supervisor.adoptRunning's registry-liveness check.
+func IsAlive(pid int) bool {
+	return isAlive(pid)
+}
+
+// ArgvMatchesName reports whether pid's argv[0] is still name -
+// exported for Supervisor.adoptRunning's PID-reuse fingerprint check.
+func ArgvMatchesName(pid int, name string) bool {
+	return argvMatchesName(pid, name)
 }
 
 // BuildEnv merges the current process environment with service-specific

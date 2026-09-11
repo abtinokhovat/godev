@@ -29,12 +29,10 @@ Usage:
   godev version                Print the build's commit/version
   godev help                   Show this message
 
-Services come from Go's own "go list" discovery, from an imported
-JetBrains .run configuration (.idea/runConfigurations), or from a
-standalone entry in .godev.yaml with an explicit "command" - the last
-two work for any language, not just Go. Group a service by setting
-"group" in .godev.yaml or importing it from a JetBrains run
-configuration folder.
+Services come from Go's own "go list" discovery, or from a standalone
+entry in .godev.yaml with an explicit "command" - the latter works
+for any language, not just Go. Group a service by setting "group" in
+.godev.yaml.
 
 "godev run" accepts any mix of group names and individual service
 names, e.g. "godev run core web api" - each matching service is
